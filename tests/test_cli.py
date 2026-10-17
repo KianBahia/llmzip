@@ -245,3 +245,47 @@ def test_cli_bad_magic_exit_1(tmp_path):
     f.write_bytes(b"not an llmzip file")
     r = run_cli("decompress", f, check=False)
     assert r.returncode == 1 and "bad magic" in r.stderr
+
+
+# --- restored copies and --unique ------------------------------------------------------
+
+
+@pytest.mark.slow
+def test_cli_restored_identical_and_unique(tmp_path):
+    src = tmp_path / "report.md"
+    src.write_bytes((SAMPLES / "sample.md").read_bytes())
+    run_cli("compress", src, "--mode", "zstd", "--quiet")
+    r = run_cli("decompress", tmp_path / "report.md.lz", "--restored")
+    restored = tmp_path / "report.restored.md"
+    assert restored.read_bytes() == src.read_bytes()
+    assert "Original vs restored: IDENTICAL ✓" in r.stdout and "report.restored.md" in r.stdout
+
+    # --unique: numbered instead of refusing; compress numbers before all extensions
+    r = run_cli("decompress", tmp_path / "report.md.lz", "--restored", "--unique")
+    assert (tmp_path / "report.restored-2.md").read_bytes() == src.read_bytes()
+    run_cli("compress", src, "--mode", "zstd", "--unique", "--quiet")
+    second = tmp_path / "report-2.md.lz"
+    assert second.exists()
+    # report-2.md.lz restores to report-2.restored.md; its original (report-2.md) is absent
+    r = run_cli("decompress", second, "--restored")
+    assert (tmp_path / "report-2.restored.md").exists() and "Original not present" in r.stdout
+
+
+@pytest.mark.slow
+def test_cli_restored_different_when_original_modified(tmp_path):
+    src = tmp_path / "notes.txt"
+    src.write_bytes(b"version one\n" * 20)
+    run_cli("compress", src, "--mode", "zstd", "--quiet")
+    src.write_bytes(b"version two\n" * 20)  # modified after compressing
+    r = run_cli("decompress", tmp_path / "notes.txt.lz", "--restored")
+    assert "DIFFERENT ✗" in r.stdout and r.returncode == 0
+    assert (tmp_path / "notes.restored.txt").read_bytes() == b"version one\n" * 20
+
+
+def test_cli_decompress_default_unchanged_without_restored(tmp_path):
+    f = tmp_path / "x.bin"
+    f.write_bytes(b"data")
+    run_cli("compress", f, "--mode", "store", "--quiet")
+    f.unlink()
+    r = run_cli("decompress", tmp_path / "x.bin.lz")
+    assert f.read_bytes() == b"data" and "Original vs restored" not in r.stdout

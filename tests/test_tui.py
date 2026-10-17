@@ -9,13 +9,13 @@ import shutil
 import time
 
 import pytest
-from textual.widgets import DataTable, Select
+from textual.widgets import DataTable, Select, Switch
 
 from llmzip import api
 from llmzip import container as ct
 from llmzip.inspect_cmd import analyze, top_surprising
 from llmzip.model import NextTokenModel
-from llmzip.tui.app import LlmzipApp
+from llmzip.tui.app import FileTree, LlmzipApp
 from llmzip.tui.heatmap import HeatmapView, layout
 from llmzip.tui.screens import ConfirmScreen
 
@@ -97,6 +97,8 @@ def test_compress_then_decompress_roundtrip(tmp_path, model):
             app.load_file(lz)
             await wait_idle(app, pilot)
             assert app.file_kind == "lz" and "match: yes" in app.overview_text
+            app.query_one("#restored", Switch).value = False  # Phase 7 behaviour: restore in place
+            await pilot.pause()
             await pilot.press("ctrl+d")
             await wait_idle(app, pilot)
             assert "Decompressed" in app.last_result
@@ -289,3 +291,108 @@ def test_layout_wraps_and_keeps_wide_tokens_selectable():
     assert tokens == set(range(len(texts)))  # every token visible, even "" and "\n"
     wide = [s for line in lines for s in line if s.token == 1]
     assert len(wide) >= 2 and "".join(s.text for s in wide) == "bbbbbbbbbbbbb"
+
+
+# --- phase 8: restore as copy, tree, --tab ----------------------------------------------
+
+
+def _make_lz(tmp_path, name="sample.md"):
+    src = copy_sample(tmp_path, name)
+    blob, _ = api.compress_bytes(src.read_bytes(), mode="zstd")
+    lz = tmp_path / (name + ".lz")
+    lz.write_bytes(blob)
+    return src, lz
+
+
+def test_restore_as_copy_identical(tmp_path, model):
+    src, lz = _make_lz(tmp_path)
+
+    async def body():
+        app = LlmzipApp(lz, model=model)
+        async with app.run_test(size=SIZE) as pilot:
+            await wait_idle(app, pilot)
+            assert app.query_one("#restored", Switch).value is True  # on by default
+            await pilot.press("ctrl+d")
+            await wait_idle(app, pilot)
+            assert "IDENTICAL ✓" in app.last_result and "sample.restored.md" in app.last_result
+            assert app.identity is not None and app.identity.identical
+
+    run(body())
+    assert (tmp_path / "sample.restored.md").read_bytes() == src.read_bytes()
+
+
+def test_restore_as_copy_different_and_not_present(tmp_path, model):
+    src, lz = _make_lz(tmp_path)
+    src.write_text("changed after compressing", encoding="utf-8")
+
+    async def body():
+        app = LlmzipApp(lz, model=model)
+        async with app.run_test(size=SIZE) as pilot:
+            await wait_idle(app, pilot)
+            await pilot.press("ctrl+d")
+            await wait_idle(app, pilot)
+            assert "DIFFERENT ✗" in app.last_result
+            src.unlink()  # original gone: overwrite the restored copy after confirming
+            await pilot.press("ctrl+d")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            await pilot.press("y")
+            await wait_idle(app, pilot)
+            assert "Original not present" in app.last_result
+
+    run(body())
+
+
+def test_switch_off_restores_in_place(tmp_path, model):
+    src, lz = _make_lz(tmp_path)
+    original = src.read_bytes()
+    src.unlink()
+
+    async def body():
+        app = LlmzipApp(lz, model=model)
+        async with app.run_test(size=SIZE) as pilot:
+            await wait_idle(app, pilot)
+            app.query_one("#restored", Switch).value = False
+            await pilot.pause()
+            await pilot.press("ctrl+d")
+            await wait_idle(app, pilot)
+            assert "IDENTICAL" not in app.last_result
+
+    run(body())
+    assert src.read_bytes() == original and not (tmp_path / "sample.restored.md").exists()
+
+
+def test_tree_hides_dotfiles_and_toggles(tmp_path, model):
+    (tmp_path / ".DS_Store").write_bytes(b"junk")
+    (tmp_path / ".hidden").mkdir()
+    copy_sample(tmp_path, "sample.md")
+
+    async def body():
+        app = LlmzipApp(tmp_path, model=model)
+        async with app.run_test(size=SIZE) as pilot:
+            await wait_idle(app, pilot)
+            tree = app.query_one(FileTree)
+            await pilot.pause(0.3)
+            shown = [str(node.data.path.name) for node in tree.root.children]
+            assert shown == ["sample.md"]
+            assert tree.display
+            await pilot.press("t")
+            assert not tree.display
+            await pilot.press("t")
+            assert tree.display
+
+    run(body())
+
+
+def test_open_on_heatmap_tab_starts_analysis(tmp_path, model):
+    md = copy_sample(tmp_path, "sample.md")
+
+    async def body():
+        app = LlmzipApp(md, model=model, tab="heatmap")
+        async with app.run_test(size=SIZE) as pilot:
+            await wait_idle(app, pilot)
+            assert app.query_one("#tabs").active == "heatmap"
+            assert app.analysis is not None and len(app.analysis.tokens) == 196
+            assert app.focused is app.query_one(HeatmapView)
+
+    run(body())

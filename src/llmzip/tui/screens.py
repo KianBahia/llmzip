@@ -16,6 +16,7 @@ KEYS = [
     ("a", "analyze: build the heatmap and stats"),
     ("b", "run the benchmark comparison"),
     ("c", "cancel the running job (nothing is written)"),
+    ("t", "show / hide the file tree"),
     ("← → ↑ ↓ / click", "heatmap: move the token cursor"),
     ("enter", "stats table: jump to that token in the heatmap"),
     ("?", "this help"),

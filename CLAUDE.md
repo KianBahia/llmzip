@@ -91,12 +91,22 @@
   - **Errors** become notifications, never crashes; with `LLMZIP_DEBUG=1` tracebacks go to `cache_dir()/tui-error.log`.
   - **Heatmap** (`tui/heatmap.py`) uses the line API with soft-wrap. Spans are recorded per visual line for exact clicks, and colours come from `inspect_cmd.BUCKETS`. `scrollbar-gutter: stable` keeps the wrap width equal to the drawn width.
   - **Tests** (`tests/test_tui.py`) run headless via `App.run_test()` inside `asyncio.run()`, with an injected model. Wait on worker groups `job`/`info`/`model` only, because DirectoryTree's own `_loader` worker never finishes.
+- **Restored copies** (`fileops`):
+  - `restored_output` inserts `.restored` before the last extension (`report.md.lz` → `report.restored.md`).
+  - `unique_path(where="base")` is for `.lz` outputs (`report-2.md.lz`); `where="last"` is for restored copies (`report.restored-2.md`).
+  - `identity_check` compares a restored copy with the original next to it (the `.lz` name minus `.lz`) using size and SHA-256.
+  - Used by `decompress --restored/--unique`, `compress --unique`, the TUI "Restore as copy" switch (on by default) and the Finder scripts.
+- **Finder Quick Actions** (`finder/`): zsh scripts plus `common.sh`.
+  - They call the CLI only (through `uv run --project REPO --frozen`), so there's no naming or coding logic in shell.
+  - `install.sh` generates `.workflow` bundles with `make_workflow.py` (plistlib) and bakes in `LLMZIP_UV` and `LLMZIP_REPO`, because Automator has a minimal PATH. It runs `plutil -lint` on them.
+  - Test hooks: `LLMZIP_NOTIFY_CMD`, `LLMZIP_LOG_FILE`, `LLMZIP_DRY_RUN`, and `install.sh --dest DIR`. Never run `install.sh` without `--dest` in tests.
 - **CLI:**
   - `llmzip compress IN [-o OUT] [--mode auto|llm|zstd|store] [--block-size N] [--force] [--verify] [-q]`.
   - `llmzip decompress IN [-o OUT] [--force] [-q]`.
   - `llmzip bench FILE... [--block-sizes 1023,512] [--no-decompress] [--out bench/results]`. New results are gitignored; publish one with `git add -f`.
   - `llmzip inspect FILE [--top N] [--block-size N] [--max-tokens N] [--json OUT] [--no-color]`.
-  - `llmzip tui [PATH] [--max-tokens N]`.
+  - `llmzip tui [PATH] [--max-tokens N] [--tab overview|heatmap|stats|compare]` (`t` toggles the tree; dotfiles are hidden).
+  - `llmzip decompress --restored [--unique]` and `llmzip compress --unique`.
   - Writes are atomic (temp file + `os.replace`). Exit codes: 0 ok, 1 error, 2 usage. `LLMZIP_DEBUG=1` shows tracebacks.
 - **Offline:** `model.py` sets `HF_HUB_OFFLINE=1` when the pinned snapshot is already cached, and loads with `local_files_only=True` first. Import `llmzip.model` before `transformers`.
 - Each phase writes a report to `reports/phase-N.md`.
@@ -110,6 +120,7 @@
 5. Benchmarks (`bench.py`, `llmzip bench`), weights-hash cache, LLM skip heuristic, per-token profile (`scripts/profile_step.py`). ✅
 6. `inspect` heatmap (`inspect_cmd.py`), LLM token budget, wrap-up. ✅ (tagged v0.1.0)
 7. Textual terminal app (`llmzip tui`). ✅
+8. Restored copies with an identity check, TUI polish, Finder Quick Actions. ✅
 
 All phases are done.
 

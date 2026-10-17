@@ -13,9 +13,13 @@ from pathlib import Path
 from llmzip import __version__, config
 from llmzip.errors import LlmzipError, UsageError
 from llmzip.fileops import (
+    NOT_PRESENT,
     check_output,
     default_compress_output,
     default_decompress_output,
+    identity_check,
+    restored_output,
+    unique_path,
     write_atomic,
 )
 
@@ -67,6 +71,8 @@ def show_progress(args) -> bool:
 def cmd_compress(args: argparse.Namespace) -> int:
     src = Path(args.input)
     out = Path(args.output) if args.output else default_compress_output(src)
+    if args.unique and not args.force:
+        out = unique_path(out, where="base")  # report-2.md.lz keeps its inner extension
     check_output(src, out, args.force)
     data = src.read_bytes()
 
@@ -99,7 +105,12 @@ def cmd_compress(args: argparse.Namespace) -> int:
 
 def cmd_decompress(args: argparse.Namespace) -> int:
     src = Path(args.input)
-    out = Path(args.output) if args.output else default_decompress_output(src)
+    if args.output:
+        out = Path(args.output)
+    else:
+        out = restored_output(src) if args.restored else default_decompress_output(src)
+    if args.unique and not args.force:
+        out = unique_path(out, where="last")  # report.restored-2.md
     check_output(src, out, args.force)
     blob = src.read_bytes()
 
@@ -116,6 +127,9 @@ def cmd_decompress(args: argparse.Namespace) -> int:
             f"decompress: {src} -> {out}  mode={MODE_NAMES[c.mode]}  "
             f"{len(blob)} -> {len(data)} B  (CRC32 ok)  {elapsed:.1f} s"
         )
+        if args.restored:
+            ident = identity_check(src, out)
+            print(ident.line() if ident else NOT_PRESENT)
     return 0
 
 
@@ -168,7 +182,7 @@ def cmd_tui(args: argparse.Namespace) -> int:
         raise UsageError(f"{path} does not exist")
     from llmzip.tui import run
 
-    run(str(path), args.max_tokens)
+    run(str(path), args.max_tokens, args.tab)
     return 0
 
 
@@ -238,6 +252,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"max tokens per LLM block (1..{config.MAX_BLOCK_TOKENS})")
     p.add_argument("--force", action="store_true", help="overwrite the output if it exists")
     p.add_argument("--verify", action="store_true", help="decompress in-process and compare")
+    p.add_argument("--unique", action="store_true",
+                   help="if the output exists, use NAME-2.EXT.lz, NAME-3… instead of failing")
     p.add_argument("--max-llm-tokens", type=nonneg_int, default=config.LLM_TOKEN_BUDGET,
                    help=f"auto mode: skip the LLM for text with more tokens (default {config.LLM_TOKEN_BUDGET}; "
                         "0 = unlimited; ignored by --mode llm)")
@@ -249,6 +265,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("decompress", help="decompress a .lz file")
     p.add_argument("input")
     p.add_argument("-o", "--output", help="output path (default: INPUT without .lz)")
+    p.add_argument("--restored", action="store_true",
+                   help="write a copy named NAME.restored.EXT and compare it with the original if present")
+    p.add_argument("--unique", action="store_true",
+                   help="if the output exists, use NAME-2… instead of failing")
     p.add_argument("--force", action="store_true", help="overwrite the output if it exists")
     p.add_argument("-q", "--quiet", action="store_true", help="no progress bar or summary")
     p.set_defaults(func=cmd_decompress)
@@ -276,6 +296,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", nargs="?", default=".", help="file or folder to open (default: .)")
     p.add_argument("--max-tokens", type=nonneg_int, default=5000,
                    help="heatmap: analyze at most this many tokens (default 5000; 0 = all)")
+    p.add_argument("--tab", choices=["overview", "heatmap", "stats", "compare"], default="overview",
+                   help="tab to open on (heatmap/stats start the analysis)")
     p.set_defaults(func=cmd_tui)
 
     p = sub.add_parser("info", help="print configuration and versions")

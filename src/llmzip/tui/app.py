@@ -26,9 +26,11 @@ from textual.widgets import (
     DirectoryTree,
     Footer,
     Header,
+    Label,
     ProgressBar,
     Select,
     Static,
+    Switch,
     TabbedContent,
     TabPane,
 )
@@ -38,12 +40,26 @@ from llmzip import container as ct
 from llmzip import inspect_cmd
 from llmzip.config import MAX_BLOCK_TOKENS
 from llmzip.errors import Cancelled, LlmzipError, UsageError
-from llmzip.fileops import default_compress_output, default_decompress_output, write_atomic
+from llmzip.fileops import (
+    NOT_PRESENT,
+    default_compress_output,
+    default_decompress_output,
+    identity_check,
+    restored_output,
+    write_atomic,
+)
 from llmzip.tui.heatmap import HeatmapView
 from llmzip.tui.screens import ConfirmScreen, HelpScreen
 
 TABS = ["overview", "heatmap", "stats", "compare"]
 MODES = [("auto", "auto"), ("llm", "llm"), ("zstd", "zstd"), ("store", "store")]
+
+
+class FileTree(DirectoryTree):
+    """DirectoryTree without dotfiles (.DS_Store, .git, …)."""
+
+    def filter_paths(self, paths):
+        return [p for p in paths if not p.name.startswith(".")]
 
 
 def _human(n: int) -> str:
@@ -53,7 +69,9 @@ def _human(n: int) -> str:
 class LlmzipApp(App):
     TITLE = "llmzip"
     CSS = """
-    #tree { width: 28; border-right: solid $panel; }
+    #tree { width: 36; border-right: solid $panel; }
+    #restore-row { height: auto; margin-bottom: 1; }
+    #restore-row Label { padding: 1 1; }
     #main { width: 1fr; }
     #actions { height: auto; margin: 1 0; }
     #actions Button { margin-right: 1; }
@@ -83,12 +101,17 @@ class LlmzipApp(App):
         Binding("a", "analyze", "Analyze"),
         Binding("b", "bench", "Bench", show=False),
         Binding("c", "cancel", "Cancel"),
+        Binding("t", "toggle_tree", "Tree"),
     ]
 
     busy: reactive[bool] = reactive(False)
 
-    def __init__(self, path: str | Path = ".", model=None, max_tokens: int = 5000) -> None:
+    def __init__(self, path: str | Path = ".", model=None, max_tokens: int = 5000,
+                 tab: str = "overview") -> None:
         super().__init__()
+        if tab not in TABS:
+            raise ValueError(f"tab must be one of {TABS}")
+        self.start_tab = tab
         path = Path(path).expanduser().resolve()
         self.start_dir = path if path.is_dir() else path.parent
         self.start_file = path if path.is_file() else None
@@ -109,13 +132,14 @@ class LlmzipApp(App):
         self.last_result = ""
         self.last_error = ""
         self.last_notice = ""
+        self.identity = None
 
     # --- layout -----------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal():
-            yield DirectoryTree(str(self.start_dir), id="tree")
+            yield FileTree(str(self.start_dir), id="tree")
             with Vertical(id="main"):
                 with TabbedContent(initial="overview", id="tabs"):
                     with TabPane("Overview [1]", id="overview"):
@@ -127,6 +151,9 @@ class LlmzipApp(App):
                                 yield Button("Decompress", id="decompress")
                                 yield Button("Verify", id="verify")
                                 yield Button("Cancel", id="cancel", variant="error", disabled=True)
+                            with Horizontal(id="restore-row"):
+                                yield Switch(value=True, id="restored")
+                                yield Label("Restore as copy (.restored) + identity check")
                             with Horizontal(id="progress-row"):
                                 yield ProgressBar(total=100, show_eta=False, id="progress")
                                 yield Static("", id="progress-label")
@@ -174,6 +201,8 @@ class LlmzipApp(App):
             self.load_model()
         if self.start_file:
             self.load_file(self.start_file)
+        if self.start_tab != "overview":
+            self.action_show_tab(self.start_tab)  # heatmap/stats start the analysis
 
     # --- model ------------------------------------------------------------------------
 
@@ -306,6 +335,7 @@ class LlmzipApp(App):
             self.query_one("#bench", Button).disabled = self.busy or not has
             self.query_one("#cancel", Button).disabled = not self.busy
             self.query_one("#mode", Select).disabled = self.busy
+            self.query_one("#restored", Switch).disabled = self.busy
         except Exception:  # noqa: BLE001  (widgets not mounted yet)
             pass
 
@@ -444,7 +474,7 @@ class LlmzipApp(App):
         for note in api.skip_notes(info):
             t.append(note + "\n", style="yellow")
         self._result(t)
-        self._set_label(f"Wrote {out}")
+        self._set_label(f"Wrote {out.name}")
         self.notify(f"Wrote {out.name}")
         self._refresh_tree()
 
@@ -456,7 +486,8 @@ class LlmzipApp(App):
             return
         src = self.current
         try:
-            out = default_decompress_output(src)
+            restored = self.query_one("#restored", Switch).value
+            out = restored_output(src) if restored else default_decompress_output(src)
         except UsageError as e:
             self._error(str(e))
             return
@@ -473,16 +504,23 @@ class LlmzipApp(App):
                 raise Cancelled("decompress cancelled")
             write_atomic(out, data)
             elapsed = time.perf_counter() - t0
-            self.call_from_thread(self._decompress_done, src, out, blob, data, c, elapsed)
+            ident = identity_check(src, out) if out != default_decompress_output(src) else None
+            self.call_from_thread(self._decompress_done, src, out, blob, data, c, elapsed, ident)
 
         self._job_wrapper("Decompress", job)
 
-    def _decompress_done(self, src, out, blob, data, c, elapsed) -> None:
+    def _decompress_done(self, src, out, blob, data, c, elapsed, ident=None) -> None:
         t = Text()
         t.append(f"Decompressed {src.name} → {out.name}\n", style="bold green")
         t.append(f"mode {ct.MODE_NAMES[c.mode]}   {len(blob):,} → {len(data):,} B   CRC32 ok   {elapsed:.1f} s\n")
+        if out != default_decompress_output(src):  # a restored copy: compare with the original
+            if ident is None:
+                t.append(NOT_PRESENT + "\n", style="dim")
+            else:
+                t.append(ident.line() + "\n", style="bold green" if ident.identical else "bold red")
+        self.identity = ident
         self._result(t)
-        self._set_label(f"Wrote {out}")
+        self._set_label(f"Wrote {out.name}")
         self.notify(f"Wrote {out.name}")
         self._refresh_tree()
 
@@ -704,6 +742,10 @@ class LlmzipApp(App):
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
 
+    def action_toggle_tree(self) -> None:
+        tree = self.query_one("#tree")
+        tree.display = not tree.display
 
-def run(path: str = ".", max_tokens: int = 5000) -> None:
-    LlmzipApp(path, max_tokens=max_tokens).run()
+
+def run(path: str = ".", max_tokens: int = 5000, tab: str = "overview") -> None:
+    LlmzipApp(path, max_tokens=max_tokens, tab=tab).run()

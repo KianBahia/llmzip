@@ -150,7 +150,7 @@ Unchanged except for the one approved addition, **textual 8.2.8**: the latest st
 - The project-level future ideas in CLAUDE.md are unchanged: parallel block coding, a leaner bit-identical forward pass, sliding-window format v2, a fine-tuned model and portability.
 
 ## 11. Git
-- Commit: `<HASH>`
+- Commit: `82a37aa`
 - Message: `Phase 7: Textual terminal app`
 - I staged the files explicitly, and this commit includes the Phase 6 report hash edit. It has not been pushed.
 - The hash was written into this file after the commit, so this line is an uncommitted edit.

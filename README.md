@@ -18,6 +18,7 @@ uv run llmzip decompress notes.txt.lz -o notes.restored.txt
 uv run llmzip inspect notes.txt                  # colour heatmap of how surprising each token was
 uv run llmzip bench bench/samples/*              # compare against gzip -9 / xz -9 / zstd -19
 uv run llmzip tui bench/samples                  # interactive terminal app (see "Terminal app")
+finder/install.sh                                # optional: right-click actions in Finder (see "Finder actions")
 ```
 
 **compress** options:
@@ -28,7 +29,11 @@ uv run llmzip tui bench/samples                  # interactive terminal app (see
 
 **inspect** options: `--top N`, `--max-tokens N` (default 5000), `--block-size N`, `--json OUT`, `--no-color`.
 
-**decompress** options: `-o OUT`, `--force`, `-q`.
+**decompress** options: `-o OUT`, `--force`, `-q`, plus:
+- `--restored`: write a copy named `NAME.restored.EXT` (for example `report.md.lz` → `report.restored.md`). If the original is still there, it prints `Original vs restored: IDENTICAL ✓` (or `DIFFERENT ✗`) with sizes and SHA-256s.
+- `--unique`: never fail on an existing output; use `report.restored-2.md`, `-3`, … instead.
+
+`compress --unique` numbers the archive before its extensions (`report-2.md.lz`), so a later `--restored` still gives `report-2.restored.md`.
 
 Exit codes are 0 ok, 1 error, 2 usage error. Set `LLMZIP_DEBUG=1` for tracebacks.
 
@@ -103,7 +108,10 @@ Blue stretches are text the model saw coming. Boilerplate, closing brackets and 
 ```
 uv run llmzip tui bench/samples              # browse the samples
 uv run llmzip tui notes.txt --max-tokens 2000
+uv run llmzip tui notes.txt --tab heatmap      # open straight on a tab (heatmap/stats analyze automatically)
 ```
+
+Dotfiles such as `.DS_Store` are hidden in the file tree. Press `t` to hide the tree and give the heatmap the full width.
 
 | key | action |
 |---|---|
@@ -115,6 +123,7 @@ uv run llmzip tui notes.txt --max-tokens 2000
 | `a` | analyze: build the heatmap and stats |
 | `b` | run the benchmark comparison |
 | `c` | cancel the running job (nothing is written) |
+| `t` | show or hide the file tree |
 | `← → ↑ ↓`, mouse click | heatmap: move the token cursor |
 | `enter` (in the Stats table) | jump to that token in the heatmap |
 | `?` | help |
@@ -125,9 +134,42 @@ uv run llmzip tui notes.txt --max-tokens 2000
 2. Choose a mode (auto, llm, zstd or store) and press **Compress**. A progress bar shows tokens done, tok/s and ETA, and the result panel shows the chosen mode, sizes, ratio and bits/char, with any "LLM skipped" reason.
    - If the output already exists, you're asked before anything is overwritten.
    - Select the `.lz` and press **Decompress** to get the file back.
+   - With **Restore as copy (.restored)** on (the default), decompress writes `NAME.restored.EXT` next to the original, and the result panel shows **Original vs restored: IDENTICAL ✓** (or **DIFFERENT ✗**) with sizes and short SHA-256s. Turn the switch off to restore in place, as `NAME.EXT`.
 3. Open **Heatmap** (`2`). The analysis runs on demand and colours every token by its cost, using the same scale as `llmzip inspect`. Move the cursor with the arrow keys or click a token; the side panel shows its bits, probability, block and the model's top-5 guesses.
 4. **Stats** (`3`) has the summary, a histogram of bit buckets, the most surprising tokens (press enter to jump to one in the heatmap) and the autopilot stretches.
 5. **Compare** (`4`) runs llmzip against gzip, xz and zstd for this file and highlights the smallest.
+
+## Finder actions (macOS)
+
+Three right-click Quick Actions: **Compress with llmzip**, **Decompress with llmzip** and **Inspect with llmzip**.
+
+```
+finder/install.sh               # install into ~/Library/Services
+finder/install.sh --uninstall   # remove them
+```
+
+What each action does:
+- **Compress with llmzip:** compresses each selected file (auto mode) to `NAME.EXT.lz`. It never overwrites; it uses `NAME-2.EXT.lz` and so on instead. Folders and `.lz` files are skipped.
+- **Decompress with llmzip:** restores each selected `.lz` as a copy, `NAME.restored.EXT` (numbered if it exists). If the original is still next to it, the notification says **IDENTICAL ✓** or **DIFFERENT ✗**.
+- **Inspect with llmzip:** opens Terminal with `llmzip tui FILE --tab heatmap`.
+
+Files are processed one after another. You get a notification when each file starts and finishes (mode, sizes and ratio), or a clear error, and a failure on one file doesn't stop the rest. Every run is logged to `~/Library/Logs/llmzip/finder.log`.
+
+**First run.** macOS may ask you to allow Finder or Automator to access files in Documents, Desktop or Downloads, and to allow notifications. If no notifications appear, check System Settings → Notifications. Inspect may also ask to let the action control Terminal.
+
+**Troubleshooting:**
+- **The actions don't appear after install:** enable them in System Settings. Depending on the macOS version this is under General → Login Items & Extensions → Finder (Quick Actions), or under Keyboard → Keyboard Shortcuts → Services → Files and Folders. Then relaunch Finder (`killall Finder`).
+- **You moved the project:** the actions contain the absolute paths of this repo and of `uv`, so rerun `finder/install.sh` after moving it.
+- **Manual setup, if the generated actions don't work on your macOS version:**
+  1. Open Automator, choose File → New → **Quick Action**.
+  2. Set "Workflow receives current" to **files or folders** in **Finder**.
+  3. Add **Run Shell Script**, with Shell **/bin/zsh** and Pass input **as arguments**.
+  4. Replace the script with the line below, adjusting both paths (and `compress` → `decompress` / `inspect` for the other actions):
+
+     ```
+     LLMZIP_UV=/opt/homebrew/bin/uv LLMZIP_REPO=/path/to/llmzip /path/to/llmzip/finder/llmzip-compress.sh "$@"
+     ```
+  5. Save it as "Compress with llmzip".
 
 ## Limitations
 
