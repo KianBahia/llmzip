@@ -13,6 +13,9 @@ ATTN_IMPLEMENTATION = "eager"
 # GPT-2's <|endoftext|> token, fed first so the first real token has a context.
 BOS_TOKEN_ID = 50256
 
+# Max tokens per independently coded LLM block: GPT-2's 1024 positions minus BOS.
+MAX_BLOCK_TOKENS = 1023
+
 # CPU threads for torch. Chosen from scripts/smoke_model.py measurements.
 NUM_THREADS = 1
 

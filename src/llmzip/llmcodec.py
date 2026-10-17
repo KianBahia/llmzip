@@ -1,27 +1,30 @@
-"""In-memory text compression: GPT-2 probabilities + the integer arithmetic coder.
+"""Text compression: GPT-2 probabilities + the integer arithmetic coder, in blocks.
+
+The whole text is tokenized (and round-trip checked) once; the ids are split into
+blocks of at most `block_size` tokens, and each block is coded independently,
+starting from a fresh BOS with an empty KV cache. Decompression decodes all blocks
+into one id list and detokenizes ONCE, so multi-byte characters split across a
+block edge are reassembled correctly.
 
 Encoder and decoder both pull their frequency tables from `_cum_tables`, which feeds
 the model one token at a time (HARD RULE 3) and converts logits with
 `probs.logits_to_freqs` (the only logits -> frequencies path).
 """
 
-import json
-import sys
-import time
-from pathlib import Path
+from collections.abc import Callable
 
 from llmzip.coder import Decoder, Encoder
+from llmzip.config import MAX_BLOCK_TOKENS
+from llmzip.errors import LlmzipError
 from llmzip.freqtable import cumulative, find_symbol, symbol_interval
 from llmzip.model import NextTokenModel
 from llmzip.probs import TOTAL, logits_to_freqs
 
+Progress = Callable[[int], None] | None  # called with the number of tokens just coded
 
-class NotRoundTrippable(ValueError):
+
+class NotRoundTrippable(LlmzipError, ValueError):
     """decode(encode(text)) != text, so the tokenizer path would not be lossless."""
-
-
-class TextTooLong(ValueError):
-    """More tokens than fit in one GPT-2 context (chunking comes in phase 4)."""
 
 
 _model: NextTokenModel | None = None
@@ -34,8 +37,9 @@ def get_model() -> NextTokenModel:
     return _model
 
 
-def max_tokens(model: NextTokenModel) -> int:
-    return model.max_positions - 1  # BOS takes one position
+def _check_block_size(block_size: int) -> None:
+    if not 1 <= block_size <= MAX_BLOCK_TOKENS:
+        raise ValueError(f"block_size must be in 1..{MAX_BLOCK_TOKENS}, got {block_size}")
 
 
 def tokenize_checked(text: str, model: NextTokenModel) -> list[int]:
@@ -46,8 +50,6 @@ def tokenize_checked(text: str, model: NextTokenModel) -> list[int]:
         raise NotRoundTrippable(f"tokenizer failed: {e}") from e
     if decoded != text:
         raise NotRoundTrippable("decode(encode(text)) differs from the input")
-    if len(ids) > max_tokens(model):
-        raise TextTooLong(f"{len(ids)} tokens exceeds the limit of {max_tokens(model)}")
     return ids
 
 
@@ -60,60 +62,73 @@ def _cum_tables(model: NextTokenModel, n: int):
             logits = model.next_logits(token)
 
 
-def compress_text(text: str, model: NextTokenModel | None = None) -> tuple[bytes, int]:
-    if text == "":
-        return b"", 0
-    model = model or get_model()
-    ids = tokenize_checked(text, model)
+def _encode_block(ids: list[int], model: NextTokenModel, progress: Progress) -> bytes:
     enc = Encoder()
     tables = _cum_tables(model, len(ids))
     cum = next(tables)
     for i, token in enumerate(ids):
         lo, hi = symbol_interval(cum, token)
         enc.encode(lo, hi, TOTAL)
+        if progress:
+            progress(1)
         if i < len(ids) - 1:
             cum = tables.send(token)
-    return enc.finish(), len(ids)
+    return enc.finish()
 
 
-def decompress_text(payload: bytes, n_tokens: int, model: NextTokenModel | None = None) -> str:
-    if n_tokens == 0:
-        return ""
-    model = model or get_model()
+def _decode_block(payload: bytes, n: int, model: NextTokenModel, progress: Progress) -> list[int]:
     dec = Decoder(payload)
-    tables = _cum_tables(model, n_tokens)
+    tables = _cum_tables(model, n)
     cum = next(tables)
     ids = []
-    for i in range(n_tokens):
+    for i in range(n):
         token = find_symbol(cum, dec.get_target(TOTAL))
         lo, hi = symbol_interval(cum, token)
         dec.consume(lo, hi, TOTAL)
         ids.append(token)
-        if i < n_tokens - 1:
+        if progress:
+            progress(1)
+        if i < n - 1:
             cum = tables.send(token)
+    return ids
+
+
+def compress_text(
+    text: str,
+    model: NextTokenModel | None = None,
+    block_size: int = MAX_BLOCK_TOKENS,
+    progress: Progress = None,
+    ids: list[int] | None = None,
+) -> tuple[list[bytes], int]:
+    """Return (block payloads, total tokens). Pass `ids` if already tokenize_checked."""
+    _check_block_size(block_size)
+    if text == "":
+        return [], 0
+    model = model or get_model()
+    if ids is None:
+        ids = tokenize_checked(text, model)
+    blocks = [
+        _encode_block(ids[i : i + block_size], model, progress)
+        for i in range(0, len(ids), block_size)
+    ]
+    return blocks, len(ids)
+
+
+def decompress_text(
+    blocks: list[bytes],
+    n_tokens: int,
+    model: NextTokenModel | None = None,
+    block_size: int = MAX_BLOCK_TOKENS,
+    progress: Progress = None,
+) -> str:
+    _check_block_size(block_size)
+    if n_tokens == 0:
+        return ""
+    if len(blocks) != -(-n_tokens // block_size):
+        raise ValueError(f"{len(blocks)} blocks inconsistent with {n_tokens} tokens")
+    model = model or get_model()
+    ids: list[int] = []
+    for b, payload in enumerate(blocks):
+        n = min(block_size, n_tokens - b * block_size)
+        ids.extend(_decode_block(payload, n, model, progress))
     return model.decode(ids)
-
-
-if __name__ == "__main__":
-    # Fresh-process round-trip helper (test/demo framing, NOT the phase 4 format):
-    #   python -m llmzip.llmcodec compress   TEXT_IN  PAYLOAD_OUT
-    #   python -m llmzip.llmcodec decompress PAYLOAD_IN TEXT_OUT
-    # Payload file = 4-byte big-endian n_tokens + payload. Prints {"seconds", "tokens"}.
-    mode, src, dst = sys.argv[1:4]
-    model = get_model()
-    if mode == "compress":
-        text = Path(src).read_bytes().decode("utf-8")  # bytes, so CRLF is untouched
-        t0 = time.perf_counter()
-        payload, n = compress_text(text, model)
-        elapsed = time.perf_counter() - t0
-        Path(dst).write_bytes(n.to_bytes(4, "big") + payload)
-    elif mode == "decompress":
-        blob = Path(src).read_bytes()
-        n = int.from_bytes(blob[:4], "big")
-        t0 = time.perf_counter()
-        text = decompress_text(blob[4:], n, model)
-        elapsed = time.perf_counter() - t0
-        Path(dst).write_bytes(text.encode("utf-8"))
-    else:
-        sys.exit(f"unknown mode {mode!r}")
-    print(json.dumps({"seconds": elapsed, "tokens": n}))

@@ -15,6 +15,10 @@ from llmzip.config import FREQ_TOTAL_BITS
 
 TOTAL = 1 << FREQ_TOTAL_BITS
 
+# Part of the model fingerprint. Bump the version whenever this module's output
+# can change, so files made with the old scheme are rejected instead of misdecoded.
+PROBS_SCHEME = "floor+1, remainder-to-argmax, v1"
+
 
 def softmax64(logits: torch.Tensor) -> np.ndarray:
     x = logits.detach().numpy().astype(np.float64)

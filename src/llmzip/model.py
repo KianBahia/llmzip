@@ -6,6 +6,7 @@ per forward pass, reusing the KV cache. Never use a batched forward pass for cod
 """
 
 import hashlib
+import logging
 import os
 import sys
 from pathlib import Path
@@ -30,9 +31,23 @@ def _cached_snapshot() -> Path:
 if (_cached_snapshot() / "config.json").is_file():
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
+# Quiet a harmless macOS warning torch emits at import time.
+logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
+
+import numpy  # noqa: E402
 import torch  # noqa: E402
 import transformers  # noqa: E402
 from transformers import AutoTokenizer, GPT2LMHeadModel  # noqa: E402
+
+transformers.utils.logging.disable_progress_bar()  # no "Loading weights" bar in CLI output
+
+from llmzip.probs import PROBS_SCHEME  # noqa: E402
+
+# split_special_tokens: a literal "<|endoftext|>" in the text is tokenized as
+# ordinary characters, so token 50256 only ever appears as our BOS.
+ENCODE_KWARGS = {"add_special_tokens": False, "split_special_tokens": True}
+# No cleanup: the default may rewrite " ." to "." and break losslessness.
+DECODE_KWARGS = {"skip_special_tokens": False, "clean_up_tokenization_spaces": False}
 
 
 def _from_pretrained(cls, **kwargs):
@@ -84,15 +99,10 @@ class NextTokenModel:
         self._pos = 0
 
     def encode(self, text: str) -> list[int]:
-        # split_special_tokens: a literal "<|endoftext|>" in the text is tokenized
-        # as ordinary characters, so token 50256 only ever appears as our BOS.
-        return self.tokenizer.encode(text, add_special_tokens=False, split_special_tokens=True)
+        return self.tokenizer.encode(text, **ENCODE_KWARGS)
 
     def decode(self, ids: list[int]) -> str:
-        # No cleanup: the default may rewrite " ." to "." and break losslessness.
-        return self.tokenizer.decode(
-            ids, skip_special_tokens=False, clean_up_tokenization_spaces=False
-        )
+        return self.tokenizer.decode(ids, **DECODE_KWARGS)
 
     @torch.no_grad()
     def next_logits(self, token_id: int) -> torch.Tensor:
@@ -139,10 +149,20 @@ class NextTokenModel:
             self.weights_sha256(),
             torch.__version__,
             transformers.__version__,
+            f"numpy={numpy.__version__}",
             f"threads={self.num_threads}",
             f"attn={config.ATTN_IMPLEMENTATION}",
+            f"freq_bits={config.FREQ_TOTAL_BITS}",
+            f"coder_bits={config.CODER_PRECISION_BITS}",
+            f"encode={sorted(ENCODE_KWARGS.items())}",
+            f"decode={sorted(DECODE_KWARGS.items())}",
+            f"probs={PROBS_SCHEME}",
         ]
         return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+
+    def fingerprint_bytes(self) -> bytes:
+        """The 8 raw bytes stored in .lz headers."""
+        return bytes.fromhex(self.model_fingerprint())
 
 
 def logits_digest(model: NextTokenModel, text: str) -> str:

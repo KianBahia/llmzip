@@ -132,6 +132,6 @@ On `prose_long` (4 KB), the classic compressors' headers no longer dominate, and
 - **Phase 6, inspect:** `softmax64(logits)[token]` per step gives the per-token surprise directly. Reuse the `_cum_tables` path, or `logits_sequence` for display only.
 
 ## 11. Git
-- Commit: `<HASH>`
+- Commit: `74084f6`
 - Message: `Phase 3: GPT-2 compression end to end`
 - The hash was written into this file after the commit, so this line is an uncommitted edit that goes into the Phase 4 commit.

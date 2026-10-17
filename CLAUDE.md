@@ -52,10 +52,27 @@
   - p = float64 stable softmax; freqs = floor(p·(2^24 − V)) + 1.
   - The remainder goes to `argmax(p)`, taking the first index on ties.
 - **Codec** (`src/llmzip/llmcodec.py`):
-  - `compress_text(text) -> (payload, n_tokens)`; `decompress_text(payload, n_tokens) -> str`.
-  - Both are driven by the single `_cum_tables` generator.
-  - `tokenize_checked` raises `NotRoundTrippable` (decode(encode(text)) != text, or the tokenizer raised) or `TextTooLong` (more than 1023 tokens).
-  - `python -m llmzip.llmcodec compress|decompress IN OUT` is a fresh-process helper for tests and demos only, not the file format.
+  - `compress_text(text, model, block_size=1023) -> (blocks, n_tokens)`; `decompress_text(blocks, n_tokens, model, block_size) -> str`.
+  - The whole text is tokenized and round-trip checked once, then the ids are cut into blocks. Each block restarts from `model.start()` (fresh BOS, empty cache).
+  - Decoding collects all ids and detokenizes ONCE, so multi-byte characters split across blocks are reassembled.
+  - Everything goes through the single `_cum_tables` generator. `NotRoundTrippable` is raised if decode(encode(text)) != text.
+- **Container v1** (`src/llmzip/container.py`, little-endian):
+  - Header: `LLMZ` | version u8 = 1 | mode u8 (0 STORED, 1 ZSTD, 2 LLM) | original_size u64 | crc32 u32 of the original bytes. That's 18 bytes.
+  - LLM body: fingerprint 8s | block_size u16 | n_tokens u64 | n_blocks u32 | n_blocks × uvarint block lengths | payloads.
+  - `unpack` validates the structure and sanity-checks the counts before any decoding. `verify` checks the size and CRC after decoding.
+  - Errors live in `src/llmzip/errors.py` (`LlmzipError` → `ContainerError` → `BadMagic`, `UnsupportedVersion`, `Truncated`, `CorruptContainer`, `FingerprintMismatch`, `ChecksumMismatch`).
+- **Routing** (`src/llmzip/api.py`, mode=auto, "never worse"):
+  - Empty input → STORED.
+  - Invalid UTF-8 or not round-trippable → candidates STORED and ZSTD.
+  - Otherwise → STORED, ZSTD (level 19) and LLM.
+  - The smallest container wins; ties go to STORED, then ZSTD, then LLM.
+  - Bytes↔text conversion is always strict `"utf-8"`, never `utf-8-sig`, so a BOM survives as U+FEFF.
+  - Decompress checks the fingerprint BEFORE running the model.
+- **Fingerprint inputs:** model name, revision, weights SHA-256, the torch, transformers and numpy versions, threads, attention implementation, `FREQ_TOTAL_BITS`, `CODER_PRECISION_BITS`, the tokenizer kwargs (`ENCODE_KWARGS`/`DECODE_KWARGS`) and `probs.PROBS_SCHEME`. **Bump `PROBS_SCHEME` whenever probs.py's output can change.** Update `EXPECTED_FINGERPRINT` in `tests/test_model.py` deliberately.
+- **CLI:**
+  - `llmzip compress IN [-o OUT] [--mode auto|llm|zstd|store] [--block-size N] [--force] [--verify] [-q]`.
+  - `llmzip decompress IN [-o OUT] [--force] [-q]`.
+  - Writes are atomic (temp file + `os.replace`). Exit codes: 0 ok, 1 error, 2 usage. `LLMZIP_DEBUG=1` shows tracebacks.
 - **Offline:** `model.py` sets `HF_HUB_OFFLINE=1` when the pinned snapshot is already cached, and loads with `local_files_only=True` first. Import `llmzip.model` before `transformers`.
 - Each phase writes a report to `reports/phase-N.md`.
 
@@ -64,7 +81,7 @@
 1. Setup, deterministic incremental model, smoke test. ✅
 2. Integer-only arithmetic coder (`coder.py`) plus round-trip tests on synthetic distributions. ✅
 3. Logits to integer frequency tables (`probs.py`); wire up end-to-end text compression (`llmcodec.py`). ✅
-4. Container format (`container.py`: mode, fingerprint, length, CRC32) and zstd fallback (`fallback.py`).
+4. Container format (`container.py`), zstd fallback (`fallback.py`), chunking, routing (`api.py`) and the real CLI. ✅
 5. Benchmarks against gzip/xz/zstd (`bench`).
 6. `inspect` heatmap (`inspect_cmd.py`) and polish.
 
@@ -76,4 +93,6 @@ uv run python scripts/smoke_model.py
 uv run llmzip info [--fingerprint]
 uv run python scripts/demo_coder.py FILE...
 uv run python scripts/demo_llm.py bench/samples/*
+uv run python scripts/demo_cli.py            # CLI end to end: samples, random bytes, a PNG
+uv run llmzip compress FILE && uv run llmzip decompress FILE.lz -o OUT
 ```

@@ -74,8 +74,9 @@ from llmzip.model import NextTokenModel
 print(NextTokenModel().model_fingerprint())
 """
 
-# Phase 1 fingerprint at NUM_THREADS=1; offline loading must not change it.
-EXPECTED_FINGERPRINT = "bf3b4c5f19722425"
+# Fingerprint at NUM_THREADS=1 (phase 4 inputs: + numpy, coder/freq bits, tokenizer
+# flags, PROBS_SCHEME). Changing it makes existing .lz files undecodable: update deliberately.
+EXPECTED_FINGERPRINT = "2bb9a6826f48e26a"
 
 
 @pytest.mark.slow
