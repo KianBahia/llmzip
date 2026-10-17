@@ -8,3 +8,4 @@ bench/corpus/
 
 # New benchmark results are local by default; publish one with: git add -f bench/results/<file>
 bench/results/*
+testcompression/
