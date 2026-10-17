@@ -38,12 +38,21 @@
 - The context is limited to 1024 positions, including BOS. `next_logits` raises when the window is full.
 - `model_fingerprint()` is 16 hex characters of SHA-256 over: model name, revision, weights SHA-256, torch and transformers versions, thread count and attention implementation. It goes in file headers (phase 4).
 - Measured in phase 1: batched logits differ from incremental ones (max |diff| ~7e-4). Incremental logits are bit-identical across runs, across thread counts 1/4/10 and across fresh processes.
+- **Coder** (`src/llmzip/coder.py`): a Witten–Neal–Cleary binary arithmetic coder using 32-bit registers (`CODER_PRECISION_BITS`). It is integer-only.
+  - `Encoder.encode(cum_low, cum_high, total)` and `Encoder.finish() -> bytes`.
+  - `Decoder(data).get_target(total)`, then `Decoder.consume(cum_low, cum_high, total)` with the same interval.
+  - The table may change at every step. `total` must be ≤ 2^30; we use 2^24 (`FREQ_TOTAL_BITS`).
+  - The coder doesn't store the symbol count; the caller must.
+  - Bits are packed MSB-first. Trailing zero bytes are stripped, and the decoder zero-fills past the end of the data. Encoding zero symbols gives `b""`.
+  - Arguments must be Python `int`, never numpy ints; anything else raises `TypeError`.
+- **Freq tables** (`src/llmzip/freqtable.py`): `cumulative(freqs, total)` builds an int64 array of length n+1 and validates it (every freq ≥ 1, the sum equals total). `symbol_interval` and `find_symbol` return Python ints.
+- **Offline:** `model.py` sets `HF_HUB_OFFLINE=1` when the pinned snapshot is already cached, and loads with `local_files_only=True` first. Import `llmzip.model` before `transformers`.
 - Each phase writes a report to `reports/phase-N.md`.
 
 ## Phase roadmap
 
 1. Setup, deterministic incremental model, smoke test. ✅
-2. Integer-only arithmetic coder (`coder.py`) plus round-trip tests on synthetic distributions.
+2. Integer-only arithmetic coder (`coder.py`) plus round-trip tests on synthetic distributions. ✅
 3. Logits to integer frequency tables (`probs.py`); wire up end-to-end text compression.
 4. Container format (`container.py`: mode, fingerprint, length, CRC32) and zstd fallback (`fallback.py`).
 5. Benchmarks against gzip/xz/zstd (`bench`).
@@ -55,4 +64,5 @@
 uv run pytest
 uv run python scripts/smoke_model.py
 uv run llmzip info [--fingerprint]
+uv run python scripts/demo_coder.py FILE...
 ```

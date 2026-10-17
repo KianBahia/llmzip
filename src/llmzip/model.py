@@ -6,13 +6,41 @@ per forward pass, reusing the KV cache. Never use a batched forward pass for cod
 """
 
 import hashlib
+import os
 import sys
-
-import torch
-import transformers
-from transformers import AutoTokenizer, GPT2LMHeadModel
+from pathlib import Path
 
 from llmzip import config
+
+
+def _cached_snapshot() -> Path:
+    """Where huggingface_hub keeps the pinned revision's files."""
+    cache = os.environ.get("HF_HUB_CACHE")
+    if cache is None:
+        home = os.environ.get("HF_HOME") or os.path.join(
+            os.environ.get("XDG_CACHE_HOME", "~/.cache"), "huggingface"
+        )
+        cache = os.path.join(home, "hub")
+    repo = "models--" + config.MODEL_NAME.replace("/", "--")
+    return Path(cache).expanduser() / repo / "snapshots" / config.MODEL_REVISION
+
+
+# Once the pinned snapshot is cached, make no network calls at all. Must be set
+# before huggingface_hub is imported, which reads it once at import time.
+if (_cached_snapshot() / "config.json").is_file():
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+import torch  # noqa: E402
+import transformers  # noqa: E402
+from transformers import AutoTokenizer, GPT2LMHeadModel  # noqa: E402
+
+
+def _from_pretrained(cls, **kwargs):
+    """Load from the local cache only; download only if the files are missing."""
+    try:
+        return cls.from_pretrained(config.MODEL_NAME, local_files_only=True, **kwargs)
+    except OSError:
+        return cls.from_pretrained(config.MODEL_NAME, **kwargs)
 
 
 def _apply_determinism(num_threads: int) -> None:
@@ -32,11 +60,9 @@ class NextTokenModel:
     def __init__(self, num_threads: int = config.NUM_THREADS):
         self.num_threads = num_threads
         _apply_determinism(num_threads)
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            config.MODEL_NAME, revision=config.MODEL_REVISION
-        )
-        self.model = GPT2LMHeadModel.from_pretrained(
-            config.MODEL_NAME,
+        self.tokenizer = _from_pretrained(AutoTokenizer, revision=config.MODEL_REVISION)
+        self.model = _from_pretrained(
+            GPT2LMHeadModel,
             revision=config.MODEL_REVISION,
             dtype=torch.float32,
             attn_implementation=config.ATTN_IMPLEMENTATION,

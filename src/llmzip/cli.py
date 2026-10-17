@@ -7,6 +7,7 @@ from llmzip import __version__, config
 
 
 def cmd_info(args: argparse.Namespace) -> int:
+    import llmzip.model  # noqa: F401  (first, so it can enable offline mode before transformers loads)
     import torch
     import transformers
 
@@ -18,6 +19,7 @@ def cmd_info(args: argparse.Namespace) -> int:
     print(f"NUM_THREADS:      {config.NUM_THREADS}")
     print(f"torch threads:    {torch.get_num_threads()}")
     print(f"FREQ_TOTAL_BITS:  {config.FREQ_TOTAL_BITS}")
+    print(f"coder precision:  {config.CODER_PRECISION_BITS} bits")
     print(f"torch:            {torch.__version__}")
     print(f"transformers:     {transformers.__version__}")
     if args.fingerprint:

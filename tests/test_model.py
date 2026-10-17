@@ -62,6 +62,31 @@ def test_cross_process_bit_identical(model):
         assert out.stdout.strip().splitlines()[-1] == parent
 
 
+NO_NETWORK_SCRIPT = """
+import socket, sys
+def _blocked(*a, **k):
+    print("NETWORK ATTEMPT", a[:2], file=sys.stderr)
+    raise OSError("network disabled in test")
+socket.socket.connect = _blocked
+socket.create_connection = _blocked
+socket.getaddrinfo = _blocked
+from llmzip.model import NextTokenModel
+print(NextTokenModel().model_fingerprint())
+"""
+
+# Phase 1 fingerprint at NUM_THREADS=1; offline loading must not change it.
+EXPECTED_FINGERPRINT = "bf3b4c5f19722425"
+
+
+@pytest.mark.slow
+def test_loads_without_network():
+    out = subprocess.run(
+        [sys.executable, "-c", NO_NETWORK_SCRIPT], capture_output=True, text=True, check=True
+    )
+    assert "NETWORK ATTEMPT" not in out.stderr
+    assert out.stdout.strip().splitlines()[-1] == EXPECTED_FINGERPRINT
+
+
 def test_batched_vs_incremental_info(model):
     """Non-gating: documents why HARD RULE 3 forbids batched probabilities."""
     ids = model.encode(TEXT)

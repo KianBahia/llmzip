@@ -129,6 +129,6 @@ The ideal size is about 4.4× smaller than gzip. The real coder will add a few b
 - **Phase 5:** time the per-token loop. Most of the cost is Python/HF overhead per call, which could be optimized later without breaking HARD RULE 3.
 
 ## 11. Git
-- Commit: `<HASH>`
+- Commit: `0323486`
 - Message: `Phase 1: project setup and model smoke test`
 - The hash was written into this file after the commit, so this line is an uncommitted edit that goes into the Phase 2 commit.

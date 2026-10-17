@@ -266,6 +266,7 @@ name = "llmzip"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "numpy" },
     { name = "rich" },
     { name = "torch" },
     { name = "transformers" },
@@ -279,6 +280,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "numpy", specifier = ">=2.5.4" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "torch", specifier = ">=2.14.1" },
     { name = "transformers", specifier = ">=5.20.1" },
