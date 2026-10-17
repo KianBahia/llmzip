@@ -61,6 +61,8 @@ class NextTokenModel:
         self.num_threads = num_threads
         _apply_determinism(num_threads)
         self.tokenizer = _from_pretrained(AutoTokenizer, revision=config.MODEL_REVISION)
+        # Tokenizing long texts is fine (limits are enforced per context); silence the warning.
+        self.tokenizer.model_max_length = 1 << 62
         self.model = _from_pretrained(
             GPT2LMHeadModel,
             revision=config.MODEL_REVISION,
@@ -82,10 +84,15 @@ class NextTokenModel:
         self._pos = 0
 
     def encode(self, text: str) -> list[int]:
-        return self.tokenizer.encode(text)
+        # split_special_tokens: a literal "<|endoftext|>" in the text is tokenized
+        # as ordinary characters, so token 50256 only ever appears as our BOS.
+        return self.tokenizer.encode(text, add_special_tokens=False, split_special_tokens=True)
 
     def decode(self, ids: list[int]) -> str:
-        return self.tokenizer.decode(ids)
+        # No cleanup: the default may rewrite " ." to "." and break losslessness.
+        return self.tokenizer.decode(
+            ids, skip_special_tokens=False, clean_up_tokenization_spaces=False
+        )
 
     @torch.no_grad()
     def next_logits(self, token_id: int) -> torch.Tensor:

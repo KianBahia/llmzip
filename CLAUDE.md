@@ -46,6 +46,16 @@
   - Bits are packed MSB-first. Trailing zero bytes are stripped, and the decoder zero-fills past the end of the data. Encoding zero symbols gives `b""`.
   - Arguments must be Python `int`, never numpy ints; anything else raises `TypeError`.
 - **Freq tables** (`src/llmzip/freqtable.py`): `cumulative(freqs, total)` builds an int64 array of length n+1 and validates it (every freq ≥ 1, the sum equals total). `symbol_interval` and `find_symbol` return Python ints.
+- **Tokenizer** (`NextTokenModel.encode`/`decode`): encoding uses `add_special_tokens=False, split_special_tokens=True`, and decoding uses `skip_special_tokens=False, clean_up_tokenization_spaces=False`.
+  - A literal `"<|endoftext|>"` in the input is tokenized as ordinary text, so token 50256 only ever appears as our own BOS.
+- **probs** (`src/llmzip/probs.py`): `logits_to_freqs` is the ONLY logits→freqs path.
+  - p = float64 stable softmax; freqs = floor(p·(2^24 − V)) + 1.
+  - The remainder goes to `argmax(p)`, taking the first index on ties.
+- **Codec** (`src/llmzip/llmcodec.py`):
+  - `compress_text(text) -> (payload, n_tokens)`; `decompress_text(payload, n_tokens) -> str`.
+  - Both are driven by the single `_cum_tables` generator.
+  - `tokenize_checked` raises `NotRoundTrippable` (decode(encode(text)) != text, or the tokenizer raised) or `TextTooLong` (more than 1023 tokens).
+  - `python -m llmzip.llmcodec compress|decompress IN OUT` is a fresh-process helper for tests and demos only, not the file format.
 - **Offline:** `model.py` sets `HF_HUB_OFFLINE=1` when the pinned snapshot is already cached, and loads with `local_files_only=True` first. Import `llmzip.model` before `transformers`.
 - Each phase writes a report to `reports/phase-N.md`.
 
@@ -53,7 +63,7 @@
 
 1. Setup, deterministic incremental model, smoke test. ✅
 2. Integer-only arithmetic coder (`coder.py`) plus round-trip tests on synthetic distributions. ✅
-3. Logits to integer frequency tables (`probs.py`); wire up end-to-end text compression.
+3. Logits to integer frequency tables (`probs.py`); wire up end-to-end text compression (`llmcodec.py`). ✅
 4. Container format (`container.py`: mode, fingerprint, length, CRC32) and zstd fallback (`fallback.py`).
 5. Benchmarks against gzip/xz/zstd (`bench`).
 6. `inspect` heatmap (`inspect_cmd.py`) and polish.
@@ -65,4 +75,5 @@ uv run pytest
 uv run python scripts/smoke_model.py
 uv run llmzip info [--fingerprint]
 uv run python scripts/demo_coder.py FILE...
+uv run python scripts/demo_llm.py bench/samples/*
 ```

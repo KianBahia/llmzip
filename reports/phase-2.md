@@ -131,6 +131,6 @@ Both round trips are byte-exact. Order-0 is expected to lose to gzip on longer t
 - **Phase 5, demo:** `scripts/demo_coder.py` could serve as a baseline row ("order-0 AC") in the benchmark.
 
 ## 11. Git
-- Commit: `<HASH>`
+- Commit: `04d2962`
 - Message: `Phase 2: integer arithmetic coder`
 - The hash was written into this file after the commit, so this line is an uncommitted edit that goes into the Phase 3 commit.

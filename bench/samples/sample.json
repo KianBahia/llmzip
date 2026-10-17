@@ -1,0 +1,24 @@
+{
+  "library": {
+    "name": "Riverside Public Library",
+    "address": {
+      "street": "42 Water Street",
+      "city": "Riverside",
+      "postal_code": "10217"
+    },
+    "open_hours": {
+      "monday": "09:00-18:00",
+      "tuesday": "09:00-18:00",
+      "wednesday": "09:00-20:00",
+      "thursday": "09:00-18:00",
+      "friday": "09:00-17:00",
+      "saturday": "10:00-14:00",
+      "sunday": null
+    },
+    "books": [
+      {"id": 1, "title": "The Silent Harbor", "author": "M. Alvarez", "year": 2011, "available": true},
+      {"id": 2, "title": "A Short History of Bridges", "author": "T. Okafor", "year": 1998, "available": false},
+      {"id": 3, "title": "Cooking with Seasonal Vegetables", "author": "L. Brandt", "year": 2019, "available": true}
+    ]
+  }
+}
