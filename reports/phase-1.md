@@ -1,0 +1,134 @@
+# Phase 1 report: project setup and model smoke test
+
+## 1. Summary
+I set up the uv project (Python 3.12) with the planned structure, a working `info` command and stubs for later phases. `NextTokenModel` runs GPT-2 deterministically on CPU, one token at a time with a KV cache. Incremental logits are bit-identical across repeated runs, across thread counts 1, 4 and 10, and across fresh processes. The ideal compressed size of a 210-word paragraph is 144 bytes (0.989 bits/char), against 637 bytes for `gzip -9`.
+
+## 2. Environment
+| Item | Version |
+|---|---|
+| macOS | 15.7.1 (build 24G231) |
+| Chip | Apple M4 Pro (10 performance + 4 efficiency cores) |
+| uv | 0.13.1 (Homebrew 2026-10-14) |
+| Python | 3.12.15 (uv-managed) |
+| xz | 5.8.4 (liblzma 5.8.4) |
+| zstd | 1.5.7 |
+| gzip | Apple gzip 457.140.3 |
+| git | 2.50.1 (Apple Git-155) |
+| torch | 2.14.1 |
+| transformers | 5.20.1 |
+| huggingface_hub | 2.2.0 (transformers dependency) |
+| zstandard | 0.25.0 |
+| rich | 15.0.0 |
+| pytest | 9.1.1 |
+
+## 3. Files created/changed
+| File | Purpose |
+|---|---|
+| `pyproject.toml` | Project metadata, dependencies, `llmzip` console script, pytest config with the `slow` marker |
+| `uv.lock` | Pins the exact dependency versions |
+| `.python-version` | Pins Python 3.12 for uv |
+| `.gitignore` | Ignores `.venv`, `__pycache__`, `.pytest_cache`, `bench/corpus/`, `*.lz` and `.DS_Store` |
+| `CLAUDE.md` | Overview, HARD RULES (verbatim), conventions and phase roadmap |
+| `README.md` | Short description and run commands |
+| `src/llmzip/__init__.py` | Package docstring and `__version__` |
+| `src/llmzip/config.py` | `MODEL_NAME`, `MODEL_REVISION`, `ATTN_IMPLEMENTATION`, `BOS_TOKEN_ID`, `NUM_THREADS=1`, `FREQ_TOTAL_BITS=16` |
+| `src/llmzip/model.py` | `NextTokenModel` (deterministic incremental GPT-2, fingerprint), `logits_digest()`, and a `python -m llmzip.model N` digest entry point for fresh-process checks |
+| `src/llmzip/cli.py` | argparse CLI: working `info [--fingerprint]`; `compress`, `decompress`, `inspect` and `bench` print "not implemented yet" and exit 2 |
+| `src/llmzip/probs.py`, `coder.py`, `container.py`, `fallback.py`, `inspect_cmd.py` | Docstring-only stubs naming the phase that fills each one |
+| `scripts/smoke_model.py` | Determinism (in-process, across thread counts, across processes), speed, batched-vs-incremental comparison, ideal size vs gzip/xz/zstd |
+| `tests/test_model.py` | 7 tests (see section 7) |
+| `bench/.gitkeep` | Placeholder for the benchmark directory |
+| `reports/phase-1.md` | This report |
+
+## 4. Key decisions
+- **Start of sequence:** `start()` resets the model, feeds `<|endoftext|>` (id 50256) as BOS and returns the logits for the first real token. That's what GPT-2 was trained to see between documents, so the first token gets a real distribution instead of a hard-coded uniform one. It costs one extra forward pass per file.
+- **`logits_sequence(ids)`:** one shared function that returns exactly one logits tensor per token in `ids`. The logits for `ids[i]` come from the model after it has seen BOS plus `ids[:i]`. The last token is never fed, because nothing follows it (the original length will be stored in the header). This is the single function phases 2–3 must use on both the encode and decode sides; the decoder will call `start()`/`next_logits()` step by step in the same order.
+- **KV cache:** the `past_key_values` (a transformers `DynamicCache`) returned by each forward pass is passed into the next one. Each call feeds a `[[token_id]]` tensor. The returned logits are `.clone()`d so later calls can't change them.
+- **Context limit:** GPT-2 has 1024 positions, and BOS takes one, so 1023 text tokens fit before `next_logits` raises `ValueError`. Handling long inputs is a later-phase decision.
+- **Attention:** `attn_implementation="eager"` is forced, so the math doesn't depend on which SDPA backend a given torch version picks. It's also part of the fingerprint.
+- **Revision pinning:** `MODEL_REVISION = 607a30d783dfa663caf39e06633721c8d4cfcd7e`, fetched with `huggingface_hub.model_info("gpt2").sha`; the Hub reports `last_modified` as 2024-02-19. It isn't from memory. The tokenizer and the weights both load at this revision.
+- **Fingerprint:** the first 16 hex characters of SHA-256 over `model name | revision | SHA-256 of all weights (state_dict sorted by name; names + raw bytes) | torch version | transformers version | threads=N | attn=eager`. The weights hash is computed once and cached. The current value at 1 thread is `bf3b4c5f19722425`. The thread count stays in the fingerprint even though logits matched across thread counts here, because that may not hold for other inputs or builds.
+- **Determinism settings** are applied in the constructor: `set_num_threads`, `use_deterministic_algorithms(True)` and `set_grad_enabled(False)`, plus `@torch.no_grad()` on `next_logits`. The model is float32 on CPU in `.eval()` mode.
+- **`NUM_THREADS = 1`:** the fastest setting measured, and fully deterministic (see section 6).
+- **Python:** uv installed its own managed CPython 3.12.15. The only other 3.12 on the machine was miniconda's, and I kept conda out of the project.
+
+## 5. Commands run and results
+| Command | Result | Key output |
+|---|---|---|
+| `sw_vers`, `sysctl …`, `uv/xz/zstd/gzip/git --version` | pass | see section 2 |
+| `git init -b main` | pass | |
+| `uv python install 3.12` | pass | CPython 3.12.15 installed |
+| `uv init --package --name llmzip --python 3.12` | pass | src-layout project |
+| `uv add torch transformers zstandard rich` / `uv add --dev pytest` | pass | versions in section 2 |
+| `uv run python -c "…model_info('gpt2').sha"` | pass | `607a30d7…cfcd7e` |
+| `uv run python scripts/smoke_model.py` (with NUM_THREADS=4, then 1) | pass (exit 0) | see section 6 |
+| `uv run pytest` | pass | 7 passed in 7.53s |
+| `uv run llmzip info` | pass (exit 0) | prints config, torch 2.14.1, threads 1, gpt2 @ revision |
+| `uv run llmzip info --fingerprint` | pass | `fingerprint: bf3b4c5f19722425` |
+| `uv run llmzip compress x` | pass (expected) | `compress: not implemented yet`, exit 2 |
+
+## 6. Smoke test results
+The paragraph is 210 words, 1165 characters and 243 tokens. Speeds below are from the final run, after setting `NUM_THREADS=1`.
+
+| Threads | Two runs bit-identical | Identical to threads=1 | 2 fresh processes match parent digest | tok/s |
+|---|---|---|---|---|
+| 1 | yes | yes | yes, yes | 179.3 |
+| 4 | yes | yes | yes, yes | 150.1 |
+| 10 (P-cores) | yes | yes | yes, yes | 128.2 |
+
+- In the first run (with `NUM_THREADS=4`), the speeds were 158.0, 153.3 and 127.1 tok/s for 1, 4 and 10 threads. The ordering was the same both times.
+- The logits digest was `8e19913f2b72243c…` for all thread counts and all processes.
+- **Recommended NUM_THREADS: 1.** Single-token forward passes are small, so thread overhead outweighs the parallel speedup. It is now set in `config.py`.
+- **Batched vs incremental** (information only): **not** bit-identical. The max |diff| was 6.714e-04 on the smoke paragraph and 3.662e-04 on the test sentence. This confirms why HARD RULE 3 exists.
+
+**Ideal compressed size vs standard compressors:**
+
+| Method | Bytes | Bits/char |
+|---|---|---|
+| raw | 1165 | 8.000 |
+| ideal (sum of −log2 p) | 144.0 (1151.8 bits) | 0.989 |
+| gzip -9 | 637 | 4.374 |
+| xz -9 | 768 | 5.274 |
+| zstd -19 | 638 | 4.381 |
+
+The ideal size is about 4.4× smaller than gzip. The real coder will add a few bytes of arithmetic-coder termination, the cost of the frequency floor/quantization, and the container header. At this tiny size, header overhead also inflates the gzip, xz and zstd numbers.
+
+## 7. Test results
+`7 passed in 7.53s`. The tests are:
+- the model loads;
+- logits have shape (50257,) and dtype float32;
+- two runs are bit-identical;
+- the fingerprint is stable;
+- the context-window guard raises;
+- cross-process bit-identity (2 subprocesses, marked `slow`, runs by default);
+- batched vs incremental (information only, never fails).
+
+## 8. Deviations from the plan
+- Additions beyond the original task spec, as you approved: cross-process determinism checks in the smoke script and the tests, fetching the revision sha from the Hub, and the batched-vs-incremental comparison.
+- Also added: `xz -9` and `zstd -19` reference rows, a cross-thread-count identity check, a context-window guard test, and a `--fingerprint` flag on `info`, so plain `info` stays fast and doesn't load the model.
+- transformers 5.x uses `dtype=` instead of the older `torch_dtype=` argument.
+- The chip is an M4 **Pro** (10 performance cores), not a base M4.
+
+## 9. Problems and open questions
+- **No unresolved failures.**
+- Every model load makes a network request to the HF Hub (the "unauthenticated requests" warning), even though the revision is pinned and the files are cached. Compression should probably work offline; see notes.
+- Importing torch prints a harmless warning: `torch/distributed/elastic … Redirects are currently not supported in MacOs`.
+- Logits matched across thread counts on this input. That isn't guaranteed in general, so the thread count stays in the fingerprint, and a file must be decompressed with the same `NUM_THREADS`.
+- Bit-exactness across machines or torch builds is untested. For example, a different CPU, an Intel Mac or Linux might take different BLAS/vectorization paths. The fingerprint includes the versions but not the CPU type.
+
+## 10. Notes for later phases
+- **Phase 2/3:** use `NextTokenModel.start()` / `next_logits()` (or `logits_sequence`) on both sides. The decoder must call `start()` and then `next_logits(decoded_token)` in exactly the encoder's order.
+- **Phase 3:**
+  - Convert logits to probabilities deterministically. Softmax in float64 on CPU is deterministic, but the integer rounding must be identical on both sides.
+  - With `FREQ_TOTAL_BITS=16`, 65536 total frequency is barely above the vocab size of 50257, so the floor of 1 per token eats about 77% of the mass. Strongly consider 24 or more bits; the coder's integer width must allow it.
+- **Phase 3/4:** long inputs (more than 1023 tokens) need a strategy, such as chunking with a cache reset and re-BOS per 1023-token block, or a sliding window with re-encoding. The choice affects both the compression ratio and speed. Speed is about 180 tok/s, so a 100 KB text (~25k tokens) takes about 2.5 minutes.
+- **Phase 4:**
+  - Store the 16-hex fingerprint in the header, and refuse to decompress on a mismatch.
+  - Consider setting `HF_HUB_OFFLINE=1` (or `local_files_only=True` once cached) so compression and decompression don't need the network.
+  - Text detection needs to decide on tokenizer round-trip safety: does `decode(encode(text)) == text` byte-for-byte? It does for GPT-2's byte-level BPE on valid UTF-8, but this must be verified, with a fallback to zstd if it fails.
+- **Phase 5:** time the per-token loop. Most of the cost is Python/HF overhead per call, which could be optimized later without breaking HARD RULE 3.
+
+## 11. Git
+- Commit: `<HASH>`
+- Message: `Phase 1: project setup and model smoke test`
+- The hash was written into this file after the commit, so this line is an uncommitted edit that goes into the Phase 2 commit.

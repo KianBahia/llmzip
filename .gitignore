@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+bench/corpus/
+*.lz
+.DS_Store

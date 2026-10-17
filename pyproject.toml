@@ -1,0 +1,31 @@
+[project]
+name = "llmzip"
+version = "0.1.0"
+description = "Lossless text compression with a local GPT-2 and arithmetic coding"
+readme = "README.md"
+authors = [
+    { name = "kianbahia", email = "kianhbahia@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "rich>=15.0.0",
+    "torch>=2.14.1",
+    "transformers>=5.20.1",
+    "zstandard>=0.25.0",
+]
+
+[project.scripts]
+llmzip = "llmzip.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: spawns fresh Python processes (still runs by default)"]
