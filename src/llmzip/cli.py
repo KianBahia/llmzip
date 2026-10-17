@@ -81,7 +81,7 @@ def progress_factory(label: str, enabled: bool):
 
 
 def show_progress(args) -> bool:
-    return not args.quiet and sys.stderr.isatty()
+    return not getattr(args, "quiet", False) and sys.stderr.isatty()
 
 
 # --- commands ---------------------------------------------------------------------
@@ -98,7 +98,8 @@ def cmd_compress(args: argparse.Namespace) -> int:
 
     t0 = time.perf_counter()
     with progress_factory("compress", show_progress(args)) as pf:
-        blob, info = api.compress_bytes(data, args.mode, args.block_size, pf, skip=not args.no_skip)
+        blob, info = api.compress_bytes(data, args.mode, args.block_size, pf, skip=not args.no_skip,
+                                        max_llm_tokens=args.max_llm_tokens)
     if args.verify:
         with progress_factory("verify", show_progress(args)) as pf:
             restored, _ = api.decompress_bytes(blob, pf)
@@ -111,6 +112,9 @@ def cmd_compress(args: argparse.Namespace) -> int:
         ratio = len(data) / len(blob)
         bpc = f", {len(blob) * 8 / info.chars:.3f} bits/char" if info.mode == LLM and info.chars else ""
         verified = ", verified" if args.verify else ""
+        if info.llm_over_budget:
+            n, budget = info.llm_over_budget
+            verified += f"; LLM skipped: {n} tokens > budget {budget} (use --max-llm-tokens 0 for unlimited)"
         if info.llm_skipped:
             est, zst = info.llm_skipped
             verified += f"; LLM skipped: est. {est} B > zstd {zst} B"
@@ -191,15 +195,47 @@ def cmd_bench(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_not_implemented(args: argparse.Namespace) -> int:
-    print(f"{args.command}: not implemented yet", file=sys.stderr)
-    return 2
+def cmd_inspect(args: argparse.Namespace) -> int:
+    import json
+
+    from rich.console import Console
+
+    src = Path(args.input)
+    try:
+        text = src.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        raise LlmzipError(f"{src} is not valid UTF-8 text; inspect only works on text") from None
+    if not text:
+        raise LlmzipError(f"{src} is empty")
+
+    from llmzip import inspect_cmd
+    from llmzip.llmcodec import get_model
+
+    model = get_model()
+    console = Console(no_color=args.no_color, highlight=False)
+    heatmap = console.is_terminal and not args.no_color
+    if not console.is_terminal:
+        console = Console(width=160, no_color=True, highlight=False)
+    with progress_factory("inspect", show_progress(args)) as pf:
+        a = inspect_cmd.analyze(text, model, args.block_size, args.max_tokens or None, pf)
+    inspect_cmd.render(a, model, console, args.top, heatmap)
+    if args.json:
+        Path(args.json).write_text(json.dumps(inspect_cmd.to_json(a, model, args.top), indent=1))
+        console.print(f"wrote {args.json}", markup=False)
+    return 0
 
 
 def block_size_arg(value: str) -> int:
     n = int(value)
     if not 1 <= n <= config.MAX_BLOCK_TOKENS:
         raise argparse.ArgumentTypeError(f"must be in 1..{config.MAX_BLOCK_TOKENS}")
+    return n
+
+
+def nonneg_int(value: str) -> int:
+    n = int(value)
+    if n < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
     return n
 
 
@@ -225,6 +261,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"max tokens per LLM block (1..{config.MAX_BLOCK_TOKENS})")
     p.add_argument("--force", action="store_true", help="overwrite the output if it exists")
     p.add_argument("--verify", action="store_true", help="decompress in-process and compare")
+    p.add_argument("--max-llm-tokens", type=nonneg_int, default=config.LLM_TOKEN_BUDGET,
+                   help=f"auto mode: skip the LLM for text with more tokens (default {config.LLM_TOKEN_BUDGET}; "
+                        "0 = unlimited; ignored by --mode llm)")
     p.add_argument("--no-skip", action="store_true",
                    help="auto mode: always run the full LLM, even if the first block predicts zstd wins")
     p.add_argument("-q", "--quiet", action="store_true", help="no progress bar or summary")
@@ -245,12 +284,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default="bench/results", help="directory for the .json and .md results")
     p.set_defaults(func=cmd_bench)
 
-    for name, help_text in [
-        ("inspect", "show per-token surprise as a heatmap"),
-    ]:
-        p = sub.add_parser(name, help=help_text)
-        p.add_argument("args", nargs="*")
-        p.set_defaults(func=cmd_not_implemented)
+    p = sub.add_parser("inspect", help="show per-token surprise as a heatmap")
+    p.add_argument("input")
+    p.add_argument("--top", type=nonneg_int, default=10, help="how many surprising tokens to list (default 10)")
+    p.add_argument("--block-size", type=block_size_arg, default=config.MAX_BLOCK_TOKENS,
+                   help="tokens per block, as in compress (default 1023)")
+    p.add_argument("--max-tokens", type=nonneg_int, default=5000,
+                   help="analyze at most this many tokens (default 5000; 0 = all)")
+    p.add_argument("--json", metavar="OUT", help="write per-token data and the summary as JSON")
+    p.add_argument("--no-color", action="store_true", help="plain text; no heatmap")
+    p.set_defaults(func=cmd_inspect)
 
     p = sub.add_parser("info", help="print configuration and versions")
     p.add_argument("--fingerprint", action="store_true", help="load the model and print its fingerprint")

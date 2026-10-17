@@ -16,6 +16,10 @@ BOS_TOKEN_ID = 50256
 # Max tokens per independently coded LLM block: GPT-2's 1024 positions minus BOS.
 MAX_BLOCK_TOKENS = 1023
 
+# Auto mode skips the LLM for text with more tokens than this (0 = unlimited).
+# At ~100-150 tok/s, 25000 tokens is roughly 3-4 minutes each way.
+LLM_TOKEN_BUDGET = 25000
+
 # CPU threads for torch. Chosen from scripts/smoke_model.py measurements.
 NUM_THREADS = 1
 

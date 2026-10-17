@@ -1,38 +1,40 @@
 # llmzip
 
-Lossless file compression with a local GPT-2 model and arithmetic coding. Each token costs about `-log2 p(token)` bits under the model's prediction, so predictable text compresses far better than with gzip. It runs on CPU only and is deterministic, so compression and decompression produce identical probabilities.
+Lossless file compression with a local GPT-2 model and arithmetic coding. Predictable text costs a fraction of a bit per token, so English prose comes out 3–4× smaller than gzip, xz or zstd. Runs on CPU only and is fully deterministic, offline after the first run.
 
-Status: phase 5 of 6. `compress` and `decompress` work on any file.
-- **Text** is coded with GPT-2 in blocks of up to 1023 tokens.
-- **Everything else** goes to zstd or is stored as-is, whichever is smallest.
-- **Integrity:** every `.lz` file records a CRC32 and the model fingerprint.
-- **Not yet implemented:** `inspect`.
-
-## Setup
-
-Requires [uv](https://docs.astral.sh/uv/). The first run downloads GPT-2 (~500 MB) into the Hugging Face cache; later runs are fully offline.
+## Quickstart
 
 ```
+# 1. Install (needs uv: https://docs.astral.sh/uv/)
+git clone <this repo> && cd llmzip
 uv sync
+
+# 2. First run downloads GPT-2 (~500 MB) into the Hugging Face cache; later runs are offline
 uv run llmzip info --fingerprint
+
+# 3. Use it
+uv run llmzip compress notes.txt                 # -> notes.txt.lz (auto: smallest of LLM / zstd / stored)
+uv run llmzip decompress notes.txt.lz -o notes.restored.txt
+uv run llmzip inspect notes.txt                  # colour heatmap of how surprising each token was
+uv run llmzip bench bench/samples/*              # compare against gzip -9 / xz -9 / zstd -19
 ```
 
-## Usage
-
-```
-uv run llmzip compress notes.txt              # writes notes.txt.lz
-uv run llmzip compress notes.txt --verify     # also decompress in-process and compare
-uv run llmzip decompress notes.txt.lz -o restored.txt
-```
-
-Options:
+**compress** options:
 - `--mode auto|llm|zstd|store` (default `auto`: smallest wins);
+- `--max-llm-tokens N` (default 25000; auto mode uses zstd above this, `0` = unlimited);
 - `--no-skip` to always try the full LLM in auto mode;
-- `-o OUT`;
-- `--force` to overwrite;
-- `-q` for quiet.
+- `--verify`, `-o OUT`, `--force`, `-q`.
+
+**inspect** options: `--top N`, `--max-tokens N` (default 5000), `--block-size N`, `--json OUT`, `--no-color`.
+
+**decompress** options: `-o OUT`, `--force`, `-q`.
 
 Exit codes are 0 ok, 1 error, 2 usage error. Set `LLMZIP_DEBUG=1` for tracebacks.
+
+**Limitations, in short:**
+- Slow (about 100–150 tokens/s, roughly 4 KB of text per 10 s).
+- Decompression needs the identical model, library versions and machine type.
+- Only valid UTF-8 text benefits; everything else goes to zstd or is stored. See [Limitations](#limitations).
 
 ## How it works
 
@@ -59,9 +61,44 @@ Decompression runs the same model with the same settings, rebuilds the same tabl
 
 The full results are in `bench/results/`.
 
+## Inspect
+
+`llmzip inspect FILE` shows what compression "sees". It uses the same tokens, the same 1023-token blocks and the same quantized probabilities, so the bits it reports are the bits actually paid. Example on `bench/samples/prose.txt`, in plain text (`--no-color --top 5`):
+
+```
+tokens 284  characters 1301  blocks 1  bits 1255.8 (ideal 1254.9)  bits/char 0.965
+predicted LLM payload 157 B  actual payload 157 B  predictability 18.7% of tokens < 1 bit
+
+                         Top 5 most surprising tokens
+  #  token        bits  prob     context                                              model's top 3
+ 89  ' no'        16.8  8.6e-06  ttle further every spring[ no] matter how oft        '.' 0.67, ',' 0.07, ' when' 0.06
+ 49  ' strings'   16.3  1.2e-05  and beans that climbed up[ strings] she tied to th   ' the' 0.35, ' to' 0.11, ' into' 0.05
+173  ' enormous'  15.0  3e-05    d just laugh, hold up the[ enormous] vegetable, and  ' basket' 0.29, ' carrot' 0.02, ' little' 0.02
+254  ' reason'    13.9  6.6e-05  eally missed was having a[ reason] to go outside     ' garden' 0.35, ' good' 0.07, ' little' 0.02
+ 77  ' stubborn'  13.6  8.3e-05  l, thyme, rosemary, and a[ stubborn] clump of mint   ' few' 0.17, ' little' 0.15, ' handful' 0.03
+```
+
+It also lists the longest "autopilot stretches", runs of consecutive tokens that each cost under 0.5 bits.
+
+### How to read the heatmap
+
+In a terminal, the file is printed exactly as it is, with every token's background coloured by how many bits it cost:
+
+- **Dark blue:** under 0.5 bits.
+- **Light blue:** 0.5–1.5 bits.
+- **Pale yellow:** 1.5–3 bits.
+- **Orange:** 3–6 bits.
+- **Red-orange:** 6–12 bits.
+- **Dark red:** 12 or more bits.
+
+Blue stretches are text the model saw coming. Boilerplate, closing brackets and the second half of a word are nearly free. Red marks real information: names, numbers, unusual word choices. Whitespace tokens are coloured too, so expensive indentation or newlines show up as coloured gaps.
+
+"Predicted payload" is the sum of these bits per block, rounded up. It matches the real compressed payload to within a few bytes.
+
 ## Limitations
 
 - **Slow:** about 100–150 tokens/s in each direction on one CPU core (about 4 KB of text per 10 s); 1 MB of text takes roughly half an hour.
+  - Auto mode only uses the LLM up to `--max-llm-tokens` (25000 by default) and uses zstd above that.
   - In auto mode, text that zstd will clearly win on (for example, highly repetitive logs) is detected from the first block, and the LLM is skipped.
   - Text that GPT-2 predicts well still gets the full, slow LLM run.
 - **Decompression needs the identical setup.** That means the same GPT-2 weights, the same torch, transformers and numpy versions, and the same settings; the fingerprint check enforces this. In practice it also means the same kind of machine: bit-exact results across different CPUs or operating systems are not guaranteed, and haven't been tested.

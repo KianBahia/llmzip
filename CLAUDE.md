@@ -76,10 +76,16 @@
 - **Weights-hash cache:** `~/Library/Caches/llmzip/weights_sha256.json` (or `$LLMZIP_CACHE_DIR`).
   - Keyed by the resolved `model.safetensors` path, size, mtime_ns and `MODEL_REVISION`.
   - Any cache problem means a recompute; the cache must never change the fingerprint.
+- **LLM token budget:** `config.LLM_TOKEN_BUDGET = 25000` and `compress --max-llm-tokens N` (0 = unlimited). Auto mode checks it right after tokenizing, before any model work, and then uses ZSTD or STORED. Forced `--mode llm` ignores it.
+- **Inspect** (`src/llmzip/inspect_cmd.py`) is read-only with respect to compression.
+  - It uses `tokenize_checked`, the same per-block `model.start()` restarts, and `probs.softmax64` / `probs.logits_to_freqs`.
+  - It codes each block in the same pass with the real `Encoder`. Tests assert those bytes equal `compress_text`'s output, so keep it that way if either side changes.
+  - Token text segments come from GPT-2's byte↔unicode table, with multi-byte characters assigned to the token that completes them.
 - **CLI:**
   - `llmzip compress IN [-o OUT] [--mode auto|llm|zstd|store] [--block-size N] [--force] [--verify] [-q]`.
   - `llmzip decompress IN [-o OUT] [--force] [-q]`.
-  - `llmzip bench FILE... [--block-sizes 1023,512] [--no-decompress] [--out bench/results]`.
+  - `llmzip bench FILE... [--block-sizes 1023,512] [--no-decompress] [--out bench/results]`. New results are gitignored; publish one with `git add -f`.
+  - `llmzip inspect FILE [--top N] [--block-size N] [--max-tokens N] [--json OUT] [--no-color]`.
   - Writes are atomic (temp file + `os.replace`). Exit codes: 0 ok, 1 error, 2 usage. `LLMZIP_DEBUG=1` shows tracebacks.
 - **Offline:** `model.py` sets `HF_HUB_OFFLINE=1` when the pinned snapshot is already cached, and loads with `local_files_only=True` first. Import `llmzip.model` before `transformers`.
 - Each phase writes a report to `reports/phase-N.md`.
@@ -91,7 +97,9 @@
 3. Logits to integer frequency tables (`probs.py`); wire up end-to-end text compression (`llmcodec.py`). ✅
 4. Container format (`container.py`), zstd fallback (`fallback.py`), chunking, routing (`api.py`) and the real CLI. ✅
 5. Benchmarks (`bench.py`, `llmzip bench`), weights-hash cache, LLM skip heuristic, per-token profile (`scripts/profile_step.py`). ✅
-6. `inspect` heatmap (`inspect_cmd.py`) and polish.
+6. `inspect` heatmap (`inspect_cmd.py`), LLM token budget, wrap-up. ✅ (tagged v0.1.0)
+
+All 6 phases are done.
 
 ## Commands
 
@@ -106,3 +114,15 @@ uv run llmzip bench bench/samples/*          # benchmark table -> bench/results/
 uv run python scripts/profile_step.py        # per-token time breakdown
 uv run llmzip compress FILE && uv run llmzip decompress FILE.lz -o OUT
 ```
+
+## Future ideas (collected from the phase reports)
+
+- **Parallel block coding:** blocks are independent, so N processes can code N blocks at once with no format change. This is the biggest practical speed-up on a 10-core machine.
+- **Leaner GPT-2 forward pass:** the HF forward is 93.5% of per-token time. A direct-module forward with a preallocated KV cache could be much faster, but it **must be bit-identical**. Verify with the fresh-process logits digest and a byte comparison of `.lz` files.
+- **Sliding-window context as format v2:** recover the block-restart loss (+5.2% at 512-token blocks vs 1023). This needs a new container version and a matching decoder, and must stay incremental (HARD RULE 3).
+- **A personal or domain fine-tuned model:** fine-tuning on your own text or code would lower bits/char a lot. It changes the fingerprint, so files are tied to that model.
+- **Cross-machine portability:** bit-exactness across CPUs and OSes is untested. It could come from integer or fixed-point inference, or from pinning kernels, with the CPU type recorded in the fingerprint.
+- **Smaller wins:**
+  - torch float64 softmax and a fused cumsum in probs (up to about 6%; any change to freqs requires a `PROBS_SCHEME` bump);
+  - a smarter skip estimate (sample several blocks);
+  - GPT-2's tendency to expect another `\n` after a newline makes indentation in code expensive (see the phase 6 report).

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from llmzip import api
 from llmzip import container as ct
-from llmzip.config import MAX_BLOCK_TOKENS
+from llmzip.config import LLM_TOKEN_BUDGET, MAX_BLOCK_TOKENS
 from llmzip.llmcodec import NotRoundTrippable, get_model, tokenize_checked
 
 EXTERNAL = {
@@ -41,7 +41,10 @@ def _auto_choice(raw: bytes, llm_blob: bytes, model, block_size: int, ids: list[
     zstd, _ = api.compress_bytes(raw, mode="zstd")
     candidates = {ct.STORED: len(stored), ct.ZSTD: len(zstd), ct.LLM: len(llm_blob)}
     skipped = None
-    if len(ids) > 2 * block_size:
+    if LLM_TOKEN_BUDGET and len(ids) > LLM_TOKEN_BUDGET:
+        skipped = f"over budget ({len(ids)} > {LLM_TOKEN_BUDGET} tokens)"
+        del candidates[ct.LLM]
+    elif len(ids) > 2 * block_size:
         first = ct.unpack(llm_blob).body.blocks[0]
         estimate, skip = api.skip_estimate(first, ids[:block_size], model, len(raw), len(zstd) - ct.HEADER_SIZE)
         if skip:

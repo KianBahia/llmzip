@@ -154,6 +154,6 @@ That covers every `bench/samples/*.txt` file plus the other small samples. `repo
 - **Future format v2:** sliding-window context to recover part of the block-restart loss. Halving the block size already costs +5.2% (see the block-size table); the loss at 1023 itself is smaller but unmeasured.
 
 ## 11. Git
-- Commit: `<HASH>`
+- Commit: `1aec5d5`
 - Message: `Phase 5: benchmarks, weight-hash cache, LLM skip heuristic`
 - The hash was written into this file after the commit, so this line is an uncommitted edit that goes into the Phase 6 commit.

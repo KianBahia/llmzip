@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from llmzip import container as ct
-from llmzip.config import MAX_BLOCK_TOKENS
+from llmzip.config import LLM_TOKEN_BUDGET, MAX_BLOCK_TOKENS
 from llmzip.errors import LlmzipError
 from llmzip.fallback import zstd_compress, zstd_decompress
 from llmzip.llmcodec import (
@@ -48,6 +48,7 @@ class CompressInfo:
     n_tokens: int | None = None
     candidates: dict[str, int] = field(default_factory=dict)  # mode name -> container size
     llm_skipped: tuple[int, int] | None = None  # (estimated LLM payload B, zstd frame B)
+    llm_over_budget: tuple[int, int] | None = None  # (tokens, budget)
 
 
 def _text_or_none(data: bytes) -> str | None:
@@ -87,7 +88,10 @@ def compress_bytes(
     progress: ProgressFactory = None,
     model: NextTokenModel | None = None,
     skip: bool = True,
+    max_llm_tokens: int = LLM_TOKEN_BUDGET,
 ) -> tuple[bytes, CompressInfo]:
+    """max_llm_tokens: auto mode skips the LLM above this many tokens (0 = unlimited);
+    checked right after tokenizing, before any model work. Forced --mode llm ignores it."""
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}")
     crc = ct.crc32(data)
@@ -95,6 +99,7 @@ def compress_bytes(
     candidates: dict[int, bytes] = {}
     ids = None
     skipped = None
+    over_budget = None
 
     if mode in ("auto", "store") or not data:
         candidates[ct.STORED] = _stored(data, crc)
@@ -107,7 +112,9 @@ def compress_bytes(
         except NotRoundTrippable:
             if mode == "llm":
                 raise
-        if ids is not None:
+        if ids is not None and mode == "auto" and max_llm_tokens and len(ids) > max_llm_tokens:
+            over_budget = (len(ids), max_llm_tokens)
+        if ids is not None and over_budget is None:
             cb = progress(len(ids)) if progress else None
             done = None
             if mode == "auto" and skip and len(ids) > 2 * block_size:
@@ -133,6 +140,7 @@ def compress_bytes(
         n_tokens=len(ids) if ids is not None else None,
         candidates={ct.MODE_NAMES[m]: len(b) for m, b in candidates.items()},
         llm_skipped=skipped,
+        llm_over_budget=over_budget,
     )
     return blob, info
 
