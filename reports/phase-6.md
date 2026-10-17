@@ -179,7 +179,7 @@ I made the baseline `.lz` files with the Phase 5 code (HEAD `1aec5d5`, before an
 There are no later phases. CLAUDE.md now carries the "Future ideas" list, summarised in section 12.
 
 ## 11. Git
-- Commit: `<HASH>`, tagged `v0.1.0`
+- Commit: `705cc5a`, tagged `v0.1.0`
 - Message: `Phase 6: inspect heatmap, LLM budget, wrap-up`
 - The hash was written into this file after the commit, so this line is an uncommitted edit (see section 9).
 

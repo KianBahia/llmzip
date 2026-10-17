@@ -17,6 +17,7 @@ uv run llmzip compress notes.txt                 # -> notes.txt.lz (auto: smalle
 uv run llmzip decompress notes.txt.lz -o notes.restored.txt
 uv run llmzip inspect notes.txt                  # colour heatmap of how surprising each token was
 uv run llmzip bench bench/samples/*              # compare against gzip -9 / xz -9 / zstd -19
+uv run llmzip tui bench/samples                  # interactive terminal app (see "Terminal app")
 ```
 
 **compress** options:
@@ -94,6 +95,39 @@ In a terminal, the file is printed exactly as it is, with every token's backgrou
 Blue stretches are text the model saw coming. Boilerplate, closing brackets and the second half of a word are nearly free. Red marks real information: names, numbers, unusual word choices. Whitespace tokens are coloured too, so expensive indentation or newlines show up as coloured gaps.
 
 "Predicted payload" is the sum of these bits per block, rounded up. It matches the real compressed payload to within a few bytes.
+
+## Terminal app
+
+`llmzip tui [PATH]` opens an interactive app. PATH can be a folder, which opens the file browser there, or a file, which opens it directly; the default is the current directory. It does the same work as the CLI (same compression, same files and the same heatmap) with a mouse- and keyboard-friendly interface. Slow jobs run in the background and can be cancelled.
+
+```
+uv run llmzip tui bench/samples              # browse the samples
+uv run llmzip tui notes.txt --max-tokens 2000
+```
+
+| key | action |
+|---|---|
+| `1` `2` `3` `4` | Overview / Heatmap / Stats / Compare tab |
+| `tab` / `shift+tab` | move focus between the file tree, buttons, heatmap and tables |
+| `ctrl+o` | compress the selected file (mode from the Overview selector) |
+| `ctrl+d` | decompress the selected `.lz` file |
+| `v` | verify: round trip in memory, nothing written |
+| `a` | analyze: build the heatmap and stats |
+| `b` | run the benchmark comparison |
+| `c` | cancel the running job (nothing is written) |
+| `← → ↑ ↓`, mouse click | heatmap: move the token cursor |
+| `enter` (in the Stats table) | jump to that token in the heatmap |
+| `?` | help |
+| `q` | quit |
+
+**Walkthrough:**
+1. Pick a file in the tree. The **Overview** shows its size, type and token count; for a `.lz` file it shows the header and whether the fingerprint matches.
+2. Choose a mode (auto, llm, zstd or store) and press **Compress**. A progress bar shows tokens done, tok/s and ETA, and the result panel shows the chosen mode, sizes, ratio and bits/char, with any "LLM skipped" reason.
+   - If the output already exists, you're asked before anything is overwritten.
+   - Select the `.lz` and press **Decompress** to get the file back.
+3. Open **Heatmap** (`2`). The analysis runs on demand and colours every token by its cost, using the same scale as `llmzip inspect`. Move the cursor with the arrow keys or click a token; the side panel shows its bits, probability, block and the model's top-5 guesses.
+4. **Stats** (`3`) has the summary, a histogram of bit buckets, the most surprising tokens (press enter to jump to one in the heatmap) and the autopilot stretches.
+5. **Compare** (`4`) runs llmzip against gzip, xz and zstd for this file and highlights the smallest.
 
 ## Limitations
 

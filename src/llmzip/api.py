@@ -51,6 +51,18 @@ class CompressInfo:
     llm_over_budget: tuple[int, int] | None = None  # (tokens, budget)
 
 
+def skip_notes(info: CompressInfo) -> list[str]:
+    """Human-readable reasons the LLM candidate was dropped (shared by CLI and TUI)."""
+    notes = []
+    if info.llm_over_budget:
+        n, budget = info.llm_over_budget
+        notes.append(f"LLM skipped: {n} tokens > budget {budget} (use --max-llm-tokens 0 for unlimited)")
+    if info.llm_skipped:
+        est, zst = info.llm_skipped
+        notes.append(f"LLM skipped: est. {est} B > zstd {zst} B")
+    return notes
+
+
 def _text_or_none(data: bytes) -> str | None:
     try:
         return data.decode("utf-8")  # strict; never utf-8-sig, so a BOM is kept as U+FEFF

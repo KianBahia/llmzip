@@ -6,44 +6,21 @@ Exit codes: 0 ok, 1 error, 2 usage error. Set LLMZIP_DEBUG=1 for tracebacks.
 import argparse
 import os
 import sys
-import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
 
 from llmzip import __version__, config
-from llmzip.errors import LlmzipError
-
-
-class UsageError(Exception):
-    pass
+from llmzip.errors import LlmzipError, UsageError
+from llmzip.fileops import (
+    check_output,
+    default_compress_output,
+    default_decompress_output,
+    write_atomic,
+)
 
 
 # --- helpers ----------------------------------------------------------------------
-
-
-def write_atomic(path: Path, data: bytes) -> None:
-    """Write via a temp file in the same directory + rename; never leaves a partial file."""
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except FileNotFoundError:
-            pass
-        raise
-
-
-def check_output(src: Path, out: Path, force: bool) -> None:
-    if out.resolve() == src.resolve():
-        raise UsageError(f"output {out} is the same file as the input")
-    if out.exists() and not force:
-        raise LlmzipError(f"{out} already exists (use --force to overwrite)")
 
 
 @contextmanager
@@ -89,7 +66,7 @@ def show_progress(args) -> bool:
 
 def cmd_compress(args: argparse.Namespace) -> int:
     src = Path(args.input)
-    out = Path(args.output) if args.output else src.with_name(src.name + ".lz")
+    out = Path(args.output) if args.output else default_compress_output(src)
     check_output(src, out, args.force)
     data = src.read_bytes()
 
@@ -112,12 +89,7 @@ def cmd_compress(args: argparse.Namespace) -> int:
         ratio = len(data) / len(blob)
         bpc = f", {len(blob) * 8 / info.chars:.3f} bits/char" if info.mode == LLM and info.chars else ""
         verified = ", verified" if args.verify else ""
-        if info.llm_over_budget:
-            n, budget = info.llm_over_budget
-            verified += f"; LLM skipped: {n} tokens > budget {budget} (use --max-llm-tokens 0 for unlimited)"
-        if info.llm_skipped:
-            est, zst = info.llm_skipped
-            verified += f"; LLM skipped: est. {est} B > zstd {zst} B"
+        verified += "".join(f"; {note}" for note in api.skip_notes(info))
         print(
             f"compress: {src} -> {out}  mode={MODE_NAMES[info.mode]}  "
             f"{len(data)} -> {len(blob)} B  (ratio {ratio:.2f}x{bpc}{verified})  {elapsed:.1f} s"
@@ -127,12 +99,7 @@ def cmd_compress(args: argparse.Namespace) -> int:
 
 def cmd_decompress(args: argparse.Namespace) -> int:
     src = Path(args.input)
-    if args.output:
-        out = Path(args.output)
-    elif src.name.endswith(".lz") and len(src.name) > 3:
-        out = src.with_name(src.name[:-3])
-    else:
-        raise UsageError(f"{src} does not end in .lz; give an output name with -o")
+    out = Path(args.output) if args.output else default_decompress_output(src)
     check_output(src, out, args.force)
     blob = src.read_bytes()
 
@@ -192,6 +159,16 @@ def cmd_bench(args: argparse.Namespace) -> int:
     failed = [r["file"] for r in results["files"] if r["llm"] and r["llm"]["roundtrip"] is False]
     if failed:
         raise LlmzipError(f"round trip FAILED for: {', '.join(failed)}")
+    return 0
+
+
+def cmd_tui(args: argparse.Namespace) -> int:
+    path = Path(args.path)
+    if not path.exists():
+        raise UsageError(f"{path} does not exist")
+    from llmzip.tui import run
+
+    run(str(path), args.max_tokens)
     return 0
 
 
@@ -294,6 +271,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", metavar="OUT", help="write per-token data and the summary as JSON")
     p.add_argument("--no-color", action="store_true", help="plain text; no heatmap")
     p.set_defaults(func=cmd_inspect)
+
+    p = sub.add_parser("tui", help="interactive terminal app (browse, compress, heatmap)")
+    p.add_argument("path", nargs="?", default=".", help="file or folder to open (default: .)")
+    p.add_argument("--max-tokens", type=nonneg_int, default=5000,
+                   help="heatmap: analyze at most this many tokens (default 5000; 0 = all)")
+    p.set_defaults(func=cmd_tui)
 
     p = sub.add_parser("info", help="print configuration and versions")
     p.add_argument("--fingerprint", action="store_true", help="load the model and print its fingerprint")

@@ -54,7 +54,8 @@ def _auto_choice(raw: bytes, llm_blob: bytes, model, block_size: int, ids: list[
     return {"mode": ct.MODE_NAMES[mode], "size": candidates[mode], "llm_skipped_estimate": skipped}
 
 
-def bench_file(path: Path, model, block_sizes: list[int], decompress: bool) -> dict:
+def bench_file(path: Path, model, block_sizes: list[int], decompress: bool, progress=None) -> dict:
+    """progress: optional ProgressFactory for the forced-LLM compression (lets a UI cancel it)."""
     raw = path.read_bytes()
     row: dict = {"file": path.name, "bytes": len(raw)}
     for name, cmd in EXTERNAL.items():
@@ -74,7 +75,7 @@ def bench_file(path: Path, model, block_sizes: list[int], decompress: bool) -> d
         return row
 
     t0 = time.perf_counter()
-    blob, _ = api.compress_bytes(raw, mode="llm", model=model)
+    blob, _ = api.compress_bytes(raw, mode="llm", model=model, progress=progress)
     t_c = time.perf_counter() - t0
     body = ct.unpack(blob).body
     payload = sum(len(b) for b in body.blocks)

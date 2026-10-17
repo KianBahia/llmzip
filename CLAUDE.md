@@ -30,6 +30,8 @@
 
 ## Conventions
 
+- Approved dependency additions beyond HARD RULE 8's list: numpy (phase 2) and textual (phase 7).
+
 - All settings live in `src/llmzip/config.py`: `MODEL_NAME`, the pinned `MODEL_REVISION` (HF commit sha), `NUM_THREADS`, `ATTN_IMPLEMENTATION="eager"`, `BOS_TOKEN_ID` and `FREQ_TOTAL_BITS`.
 - **Shared probability source:** `NextTokenModel` in `src/llmzip/model.py`.
   - `start()` feeds `<|endoftext|>` (50256) as BOS and returns the logits for the first real token.
@@ -81,11 +83,20 @@
   - It uses `tokenize_checked`, the same per-block `model.start()` restarts, and `probs.softmax64` / `probs.logits_to_freqs`.
   - It codes each block in the same pass with the real `Encoder`. Tests assert those bytes equal `compress_text`'s output, so keep it that way if either side changes.
   - Token text segments come from GPT-2's byte↔unicode table, with multi-byte characters assigned to the token that completes them.
+- **TUI** (`src/llmzip/tui/`, Textual, `llmzip tui [PATH]`) is a front end only.
+  - It calls `api.compress_bytes` / `api.decompress_bytes`, `inspect_cmd.analyze(top_k=5)` and `bench.bench_file`, and never re-implements coding, probs or the format.
+  - It shares `fileops` (output naming, `check_output`, `write_atomic`) and `api.skip_notes` with the CLI. A test asserts that TUI and CLI `.lz` output are byte-identical.
+  - **Workers:** every slow task is a thread worker; the model loads once at startup, and jobs run in group "job", one at a time, with buttons disabled while busy. Workers touch widgets only via `call_from_thread`.
+  - **Cancellation:** the Cancel key sets a `threading.Event`, and the api progress callback raises `errors.Cancelled` on the next token. Output is written (atomically) only after a job finishes, so cancelled or failed jobs write nothing.
+  - **Errors** become notifications, never crashes; with `LLMZIP_DEBUG=1` tracebacks go to `cache_dir()/tui-error.log`.
+  - **Heatmap** (`tui/heatmap.py`) uses the line API with soft-wrap. Spans are recorded per visual line for exact clicks, and colours come from `inspect_cmd.BUCKETS`. `scrollbar-gutter: stable` keeps the wrap width equal to the drawn width.
+  - **Tests** (`tests/test_tui.py`) run headless via `App.run_test()` inside `asyncio.run()`, with an injected model. Wait on worker groups `job`/`info`/`model` only, because DirectoryTree's own `_loader` worker never finishes.
 - **CLI:**
   - `llmzip compress IN [-o OUT] [--mode auto|llm|zstd|store] [--block-size N] [--force] [--verify] [-q]`.
   - `llmzip decompress IN [-o OUT] [--force] [-q]`.
   - `llmzip bench FILE... [--block-sizes 1023,512] [--no-decompress] [--out bench/results]`. New results are gitignored; publish one with `git add -f`.
   - `llmzip inspect FILE [--top N] [--block-size N] [--max-tokens N] [--json OUT] [--no-color]`.
+  - `llmzip tui [PATH] [--max-tokens N]`.
   - Writes are atomic (temp file + `os.replace`). Exit codes: 0 ok, 1 error, 2 usage. `LLMZIP_DEBUG=1` shows tracebacks.
 - **Offline:** `model.py` sets `HF_HUB_OFFLINE=1` when the pinned snapshot is already cached, and loads with `local_files_only=True` first. Import `llmzip.model` before `transformers`.
 - Each phase writes a report to `reports/phase-N.md`.
@@ -98,8 +109,9 @@
 4. Container format (`container.py`), zstd fallback (`fallback.py`), chunking, routing (`api.py`) and the real CLI. ✅
 5. Benchmarks (`bench.py`, `llmzip bench`), weights-hash cache, LLM skip heuristic, per-token profile (`scripts/profile_step.py`). ✅
 6. `inspect` heatmap (`inspect_cmd.py`), LLM token budget, wrap-up. ✅ (tagged v0.1.0)
+7. Textual terminal app (`llmzip tui`). ✅
 
-All 6 phases are done.
+All phases are done.
 
 ## Commands
 

@@ -5,6 +5,14 @@ class LlmzipError(Exception):
     pass
 
 
+class UsageError(Exception):
+    """Bad command-line usage (exit code 2)."""
+
+
+class Cancelled(LlmzipError):
+    """Raised from a progress callback to stop a running job; nothing has been written."""
+
+
 class ContainerError(LlmzipError):
     """The .lz file is malformed, incompatible or corrupt."""
 

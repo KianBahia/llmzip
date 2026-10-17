@@ -40,7 +40,7 @@ class TokenInfo:
     quant_bits: float
     prob: float
     block: int
-    top3: list[tuple[int, float]] = field(default_factory=list)
+    top: list[tuple[int, float]] = field(default_factory=list)  # model's top_k (token id, prob)
 
 
 @dataclass
@@ -104,7 +104,7 @@ def token_segments(model: NextTokenModel, ids: list[int]) -> list[str]:
 
 
 def analyze(text: str, model: NextTokenModel, block_size: int = MAX_BLOCK_TOKENS,
-            max_tokens: int | None = 5000, progress=None) -> Analysis:
+            max_tokens: int | None = 5000, progress=None, top_k: int = 3) -> Analysis:
     """progress: optional factory(total_tokens) -> advance(n) callback, as in api."""
     if not 1 <= block_size <= MAX_BLOCK_TOKENS:
         raise ValueError(f"block_size must be in 1..{MAX_BLOCK_TOKENS}")
@@ -130,12 +130,12 @@ def analyze(text: str, model: NextTokenModel, block_size: int = MAX_BLOCK_TOKENS
             lo, hi = symbol_interval(cumulative(freqs, TOTAL), tok)
             enc.encode(lo, hi, TOTAL)
             quant = -math.log2(int(freqs[tok]) / TOTAL)
-            top = np.argpartition(p, -3)[-3:]
+            top = np.argpartition(p, -top_k)[-top_k:]
             top = top[np.argsort(-p[top], kind="stable")]
             tokens.append(TokenInfo(
                 id=tok, text=segments[start + i], ideal_bits=-math.log2(float(p[tok])),
                 quant_bits=quant, prob=float(p[tok]), block=b,
-                top3=[(int(t), float(p[t])) for t in top],
+                top=[(int(t), float(p[t])) for t in top],
             ))
             block_bits += quant
             if advance:
@@ -203,8 +203,8 @@ def to_json(a: Analysis, model: NextTokenModel, top_n: int) -> dict:
             for t in a.tokens
         ],
         "top_surprising": [
-            {"index": i, **{k: v for k, v in asdict(a.tokens[i]).items() if k != "top3"},
-             "top3": [{"token": model.decode([t]), "prob": p} for t, p in a.tokens[i].top3]}
+            {"index": i, **{k: v for k, v in asdict(a.tokens[i]).items() if k != "top"},
+             "top3": [{"token": model.decode([t]), "prob": p} for t, p in a.tokens[i].top[:3]]}
             for i in top_surprising(a, top_n)
         ],
         "autopilot_runs": [{"start": s, "length": n} for s, n in autopilot_runs(a)],
@@ -259,7 +259,7 @@ def render(a: Analysis, model: NextTokenModel, console, top_n: int, heatmap: boo
         table.add_column(col, justify="right" if col in ("#", "bits", "prob") else "left")
     for i in top_surprising(a, top_n):
         t = a.tokens[i]
-        top3 = ", ".join(f"{model.decode([tid])!r} {p:.2f}" for tid, p in t.top3)
+        top3 = ", ".join(f"{model.decode([tid])!r} {p:.2f}" for tid, p in t.top[:3])
         # Text(), not str: rich would parse "[import]" in the context as markup and drop it.
         table.add_row(str(i), Text(repr(t.text)), f"{t.quant_bits:.1f}", f"{t.prob:.2g}",
                       Text(context(a, i)), Text(top3))

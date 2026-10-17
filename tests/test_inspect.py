@@ -61,7 +61,7 @@ def test_top_n_sorted_and_top3_valid(prose, model):
     assert len(idx) == 10 and bits == sorted(bits, reverse=True)
     assert bits[0] == max(t.quant_bits for t in prose.tokens)
     for i in idx:
-        top3 = prose.tokens[i].top3
+        top3 = prose.tokens[i].top
         assert len(top3) == 3
         assert all(isinstance(model.decode([tid]), str) and 0 <= tid < model.vocab_size for tid, _ in top3)
         probs = [p for _, p in top3]
