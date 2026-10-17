@@ -8,6 +8,12 @@ Routing for mode="auto" ("never worse"):
 The smallest packed container wins; ties prefer STORED, then ZSTD, then LLM
 (cheapest to decompress). All modes share the same header, so this equals
 "smaller of zstd and LLM, unless not smaller than the raw bytes -> STORED".
+
+Skip heuristic (auto mode, text longer than 2 blocks, unless skip=False): code only
+the first block, estimate the full LLM payload as its bits/byte x total bytes, and
+drop the LLM candidate if that estimate exceeds the zstd frame. Otherwise the first
+block is reused, so it is never coded twice and the output is identical to a
+no-skip run.
 """
 
 from collections.abc import Callable
@@ -17,7 +23,14 @@ from llmzip import container as ct
 from llmzip.config import MAX_BLOCK_TOKENS
 from llmzip.errors import LlmzipError
 from llmzip.fallback import zstd_compress, zstd_decompress
-from llmzip.llmcodec import NotRoundTrippable, compress_text, decompress_text, get_model, tokenize_checked
+from llmzip.llmcodec import (
+    NotRoundTrippable,
+    compress_text,
+    decompress_text,
+    encode_block,
+    get_model,
+    tokenize_checked,
+)
 from llmzip.model import NextTokenModel
 
 MODES = ("auto", "llm", "zstd", "store")
@@ -34,6 +47,7 @@ class CompressInfo:
     chars: int | None = None
     n_tokens: int | None = None
     candidates: dict[str, int] = field(default_factory=dict)  # mode name -> container size
+    llm_skipped: tuple[int, int] | None = None  # (estimated LLM payload B, zstd frame B)
 
 
 def _text_or_none(data: bytes) -> str | None:
@@ -52,11 +66,18 @@ def _zstd(data: bytes, crc: int) -> bytes:
 
 
 def _llm(data: bytes, crc: int, text: str, ids: list[int], model: NextTokenModel,
-         block_size: int, progress: ProgressFactory) -> bytes:
-    cb = progress(len(ids)) if progress else None
-    blocks, n_tokens = compress_text(text, model, block_size, cb, ids=ids)
+         block_size: int, cb, done_blocks: list[bytes] | None = None) -> bytes:
+    blocks, n_tokens = compress_text(text, model, block_size, cb, ids=ids, done_blocks=done_blocks)
     body = ct.LLMBody(model.fingerprint_bytes(), block_size, n_tokens, blocks)
     return ct.pack(ct.Container(ct.LLM, len(data), crc, body))
+
+
+def skip_estimate(first: bytes, first_ids: list[int], model: NextTokenModel,
+                  total_bytes: int, zstd_frame: int) -> tuple[int, bool]:
+    """(estimated full LLM payload in bytes, whether to skip the LLM) from the first block."""
+    prefix_bytes = len(model.decode(first_ids).encode("utf-8"))
+    estimate = len(first) * total_bytes // max(prefix_bytes, 1)
+    return estimate, estimate > zstd_frame
 
 
 def compress_bytes(
@@ -65,6 +86,7 @@ def compress_bytes(
     block_size: int = MAX_BLOCK_TOKENS,
     progress: ProgressFactory = None,
     model: NextTokenModel | None = None,
+    skip: bool = True,
 ) -> tuple[bytes, CompressInfo]:
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}")
@@ -72,6 +94,7 @@ def compress_bytes(
     text = _text_or_none(data)
     candidates: dict[int, bytes] = {}
     ids = None
+    skipped = None
 
     if mode in ("auto", "store") or not data:
         candidates[ct.STORED] = _stored(data, crc)
@@ -85,7 +108,17 @@ def compress_bytes(
             if mode == "llm":
                 raise
         if ids is not None:
-            candidates[ct.LLM] = _llm(data, crc, text, ids, model, block_size, progress)
+            cb = progress(len(ids)) if progress else None
+            done = None
+            if mode == "auto" and skip and len(ids) > 2 * block_size:
+                first = encode_block(ids[:block_size], model, cb)
+                zstd_frame = len(candidates[ct.ZSTD]) - ct.HEADER_SIZE
+                estimate, skip_llm = skip_estimate(first, ids[:block_size], model, len(data), zstd_frame)
+                if skip_llm:
+                    skipped = (estimate, zstd_frame)
+                done = [first]
+            if skipped is None:
+                candidates[ct.LLM] = _llm(data, crc, text, ids, model, block_size, cb, done)
     if data and mode == "llm" and text is None:
         raise LlmzipError("--mode llm needs valid UTF-8 text; this input is not")
 
@@ -99,6 +132,7 @@ def compress_bytes(
         chars=len(text) if text is not None else None,
         n_tokens=len(ids) if ids is not None else None,
         candidates={ct.MODE_NAMES[m]: len(b) for m, b in candidates.items()},
+        llm_skipped=skipped,
     )
     return blob, info
 

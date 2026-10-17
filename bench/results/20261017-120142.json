@@ -1,0 +1,81 @@
+{
+  "timestamp": "20261017-120142",
+  "model_load_s": 0.12853837499278598,
+  "fingerprint": "2bb9a6826f48e26a",
+  "block_sizes": [
+    1023,
+    512,
+    256,
+    128
+  ],
+  "files": [
+    {
+      "file": "blocktest.txt",
+      "bytes": 9515,
+      "gzip -9": {
+        "size": 4399,
+        "bpb": 3.6985811875985286
+      },
+      "xz -9": {
+        "size": 4352,
+        "bpb": 3.6590646347871782
+      },
+      "zstd -19": {
+        "size": 4334,
+        "bpb": 3.6439306358381502
+      },
+      "llm": {
+        "tokens": 3000,
+        "blocks": 3,
+        "payload": 2150,
+        "size": 2196,
+        "bpb": 1.8463478717813977,
+        "payload_bpb": 1.8076720966894377,
+        "compress_s": 32.12212508299854,
+        "compress_tok_s": 93.39357194607985,
+        "decompress_s": null,
+        "decompress_tok_s": null,
+        "roundtrip": null
+      },
+      "auto": {
+        "mode": "LLM",
+        "size": 2196,
+        "llm_skipped_estimate": null
+      },
+      "block_sizes": [
+        {
+          "block_size": 1023,
+          "blocks": 3,
+          "size": 2196,
+          "payload": 2150,
+          "bpb": 1.8463478717813977,
+          "compress_s": 32.12212508299854
+        },
+        {
+          "block_size": 512,
+          "blocks": 6,
+          "size": 2310,
+          "payload": 2258,
+          "bpb": 1.9421965317919074,
+          "compress_s": 23.086117124999873
+        },
+        {
+          "block_size": 256,
+          "blocks": 12,
+          "size": 2405,
+          "payload": 2341,
+          "bpb": 2.022070415133999,
+          "compress_s": 19.368762375001097
+        },
+        {
+          "block_size": 128,
+          "blocks": 24,
+          "size": 2538,
+          "payload": 2474,
+          "bpb": 2.133893851812927,
+          "compress_s": 19.10120220799581
+        }
+      ]
+    }
+  ]
+}

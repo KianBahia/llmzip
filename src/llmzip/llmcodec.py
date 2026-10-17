@@ -62,7 +62,8 @@ def _cum_tables(model: NextTokenModel, n: int):
             logits = model.next_logits(token)
 
 
-def _encode_block(ids: list[int], model: NextTokenModel, progress: Progress) -> bytes:
+def encode_block(ids: list[int], model: NextTokenModel, progress: Progress = None) -> bytes:
+    """Code one block (<= MAX_BLOCK_TOKENS ids) from a fresh BOS. Same bits as inside compress_text."""
     enc = Encoder()
     tables = _cum_tables(model, len(ids))
     cum = next(tables)
@@ -99,18 +100,22 @@ def compress_text(
     block_size: int = MAX_BLOCK_TOKENS,
     progress: Progress = None,
     ids: list[int] | None = None,
+    done_blocks: list[bytes] | None = None,
 ) -> tuple[list[bytes], int]:
-    """Return (block payloads, total tokens). Pass `ids` if already tokenize_checked."""
+    """Return (block payloads, total tokens). Pass `ids` if already tokenize_checked.
+
+    `done_blocks` are leading blocks already produced by `encode_block` for these ids
+    and this block_size (e.g. by the auto-mode size estimate); they are not re-encoded.
+    """
     _check_block_size(block_size)
     if text == "":
         return [], 0
     model = model or get_model()
     if ids is None:
         ids = tokenize_checked(text, model)
-    blocks = [
-        _encode_block(ids[i : i + block_size], model, progress)
-        for i in range(0, len(ids), block_size)
-    ]
+    blocks = list(done_blocks or [])
+    for i in range(len(blocks) * block_size, len(ids), block_size):
+        blocks.append(encode_block(ids[i : i + block_size], model, progress))
     return blocks, len(ids)
 
 

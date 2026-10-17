@@ -79,6 +79,7 @@ Unchanged: macOS 15.7.1, Apple M4 Pro, uv 0.13.1, Python 3.12.15, torch 2.14.1, 
 | Progress bar, forced terminal rendering (`TTY_COMPATIBLE=1`) | pass | frame: `compress ━━╸━━… 27/196 tok 172 tok/s 0:00:01` |
 | `LLMZIP_DEBUG=1 llmzip decompress bad.lz` vs without | pass | traceback with `UnsupportedVersion` vs a one-line `llmzip: error: unsupported format version 9 (this build reads 1)`, exit 1 |
 | `uv run pytest` | pass | 309 passed in 131.34s |
+| `uv run python scripts/demo_llm.py` (5 small samples, run after the commit) | pass (exit 0) | all OK; payload sizes identical to Phase 3 (157/484/109/113/165 B), so the refactor changed no coded bits; the `.lz` sizes add 41–42 B |
 
 ## 6. Smoke test results (CLI demo)
 Each file was compressed by one `llmzip` process and decompressed by a separate one, then compared with `cmp`.
@@ -167,6 +168,6 @@ Each file was compressed by one `llmzip` process and decompressed by a separate 
 - **Phase 6, inspect:** reuse `llmcodec`'s block structure (restart per block) so the heatmap matches what is actually coded. `softmax64(logits)[token]` gives the per-token surprise.
 
 ## 11. Git
-- Commit: `<HASH>`
+- Commit: `8601f1d`
 - Message: `Phase 4: file format, fallback, chunking and CLI`
 - The hash was written into this file after the commit, so this line is an uncommitted edit that goes into the Phase 5 commit.

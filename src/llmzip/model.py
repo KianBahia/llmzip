@@ -6,6 +6,7 @@ per forward pass, reusing the KV cache. Never use a batched forward pass for cod
 """
 
 import hashlib
+import json
 import logging
 import os
 import sys
@@ -56,6 +57,51 @@ def _from_pretrained(cls, **kwargs):
         return cls.from_pretrained(config.MODEL_NAME, local_files_only=True, **kwargs)
     except OSError:
         return cls.from_pretrained(config.MODEL_NAME, **kwargs)
+
+
+# --- weights-hash cache -------------------------------------------------------------
+# The cache only saves time: any problem reading or writing it falls back to
+# recomputing, and the value is keyed by the exact weights file it was computed from.
+
+_CACHE_FILE = "weights_sha256.json"
+
+
+def cache_dir() -> Path:
+    if os.environ.get("LLMZIP_CACHE_DIR"):
+        return Path(os.environ["LLMZIP_CACHE_DIR"]).expanduser()
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "llmzip"
+    return Path(os.environ.get("XDG_CACHE_HOME", "~/.cache")).expanduser() / "llmzip"
+
+
+def _weights_cache_key() -> str | None:
+    try:
+        path = (_cached_snapshot() / "model.safetensors").resolve(strict=True)
+        st = path.stat()
+        return f"{path}|{st.st_size}|{st.st_mtime_ns}|{config.MODEL_REVISION}"
+    except OSError:
+        return None
+
+
+def _cache_get(key: str) -> str | None:
+    try:
+        value = json.loads((cache_dir() / _CACHE_FILE).read_text()).get(key)
+        if isinstance(value, str) and len(value) == 64 and int(value, 16) >= 0:
+            return value
+    except Exception:  # missing, unreadable or malformed: just recompute
+        pass
+    return None
+
+
+def _cache_put(key: str, value: str) -> None:
+    try:
+        d = cache_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        tmp = d / f".{_CACHE_FILE}.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps({key: value}))
+        os.replace(tmp, d / _CACHE_FILE)
+    except Exception:
+        pass
 
 
 def _apply_determinism(num_threads: int) -> None:
@@ -132,13 +178,23 @@ class NextTokenModel:
             out.append(self.next_logits(t))
         return out
 
-    def weights_sha256(self) -> str:
+    def _compute_weights_sha256(self) -> str:
+        h = hashlib.sha256()
+        for name, tensor in sorted(self.model.state_dict().items()):
+            h.update(name.encode())
+            h.update(tensor.contiguous().numpy().tobytes())
+        return h.hexdigest()
+
+    def weights_sha256(self, use_cache: bool = True) -> str:
+        """SHA-256 of all weights (~1 s to compute), cached on disk per weights file."""
         if self._weights_sha is None:
-            h = hashlib.sha256()
-            for name, tensor in sorted(self.model.state_dict().items()):
-                h.update(name.encode())
-                h.update(tensor.contiguous().numpy().tobytes())
-            self._weights_sha = h.hexdigest()
+            key = _weights_cache_key() if use_cache else None
+            cached = _cache_get(key) if key else None
+            if cached is None:
+                cached = self._compute_weights_sha256()
+                if key:
+                    _cache_put(key, cached)
+            self._weights_sha = cached
         return self._weights_sha
 
     def model_fingerprint(self) -> str:

@@ -51,6 +51,7 @@
 - **probs** (`src/llmzip/probs.py`): `logits_to_freqs` is the ONLY logits→freqs path.
   - p = float64 stable softmax; freqs = floor(p·(2^24 − V)) + 1.
   - The remainder goes to `argmax(p)`, taking the first index on ties.
+- **Phase 5 constraint, still in force:** speed or tooling changes must not alter coded bits. Verify with a byte comparison of `.lz` files against the previous phase.
 - **Codec** (`src/llmzip/llmcodec.py`):
   - `compress_text(text, model, block_size=1023) -> (blocks, n_tokens)`; `decompress_text(blocks, n_tokens, model, block_size) -> str`.
   - The whole text is tokenized and round-trip checked once, then the ids are cut into blocks. Each block restarts from `model.start()` (fresh BOS, empty cache).
@@ -68,10 +69,17 @@
   - The smallest container wins; ties go to STORED, then ZSTD, then LLM.
   - Bytes↔text conversion is always strict `"utf-8"`, never `utf-8-sig`, so a BOM survives as U+FEFF.
   - Decompress checks the fingerprint BEFORE running the model.
+  - **Skip heuristic:** in auto mode, for text longer than 2 blocks, the first block is coded alone. The full LLM payload is estimated from its bits/byte; if that exceeds the zstd frame, the LLM is skipped.
+    - Otherwise the first block is reused via `compress_text(done_blocks=...)`, so the output is bit-identical to a no-skip run.
+    - `--no-skip` disables the heuristic; `api.skip_estimate` is shared with bench.
 - **Fingerprint inputs:** model name, revision, weights SHA-256, the torch, transformers and numpy versions, threads, attention implementation, `FREQ_TOTAL_BITS`, `CODER_PRECISION_BITS`, the tokenizer kwargs (`ENCODE_KWARGS`/`DECODE_KWARGS`) and `probs.PROBS_SCHEME`. **Bump `PROBS_SCHEME` whenever probs.py's output can change.** Update `EXPECTED_FINGERPRINT` in `tests/test_model.py` deliberately.
+- **Weights-hash cache:** `~/Library/Caches/llmzip/weights_sha256.json` (or `$LLMZIP_CACHE_DIR`).
+  - Keyed by the resolved `model.safetensors` path, size, mtime_ns and `MODEL_REVISION`.
+  - Any cache problem means a recompute; the cache must never change the fingerprint.
 - **CLI:**
   - `llmzip compress IN [-o OUT] [--mode auto|llm|zstd|store] [--block-size N] [--force] [--verify] [-q]`.
   - `llmzip decompress IN [-o OUT] [--force] [-q]`.
+  - `llmzip bench FILE... [--block-sizes 1023,512] [--no-decompress] [--out bench/results]`.
   - Writes are atomic (temp file + `os.replace`). Exit codes: 0 ok, 1 error, 2 usage. `LLMZIP_DEBUG=1` shows tracebacks.
 - **Offline:** `model.py` sets `HF_HUB_OFFLINE=1` when the pinned snapshot is already cached, and loads with `local_files_only=True` first. Import `llmzip.model` before `transformers`.
 - Each phase writes a report to `reports/phase-N.md`.
@@ -82,7 +90,7 @@
 2. Integer-only arithmetic coder (`coder.py`) plus round-trip tests on synthetic distributions. ✅
 3. Logits to integer frequency tables (`probs.py`); wire up end-to-end text compression (`llmcodec.py`). ✅
 4. Container format (`container.py`), zstd fallback (`fallback.py`), chunking, routing (`api.py`) and the real CLI. ✅
-5. Benchmarks against gzip/xz/zstd (`bench`).
+5. Benchmarks (`bench.py`, `llmzip bench`), weights-hash cache, LLM skip heuristic, per-token profile (`scripts/profile_step.py`). ✅
 6. `inspect` heatmap (`inspect_cmd.py`) and polish.
 
 ## Commands
@@ -94,5 +102,7 @@ uv run llmzip info [--fingerprint]
 uv run python scripts/demo_coder.py FILE...
 uv run python scripts/demo_llm.py bench/samples/*
 uv run python scripts/demo_cli.py            # CLI end to end: samples, random bytes, a PNG
+uv run llmzip bench bench/samples/*          # benchmark table -> bench/results/
+uv run python scripts/profile_step.py        # per-token time breakdown
 uv run llmzip compress FILE && uv run llmzip decompress FILE.lz -o OUT
 ```

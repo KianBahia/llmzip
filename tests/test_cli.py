@@ -88,6 +88,31 @@ def test_forced_modes(model):
         api.compress_bytes(b"\xff\xfe", mode="llm", model=model)
 
 
+# --- skip heuristic ---------------------------------------------------------------
+
+LOG_LINE = "2026-10-17 12:00:01 INFO GET /api/v1/items?page=2 status=200 time=12ms\n"
+
+
+def test_skip_heuristic_skips_repetitive_log(model):
+    data = (LOG_LINE * 120).encode()  # > 2 blocks of 1023 tokens
+    blob, info = api.compress_bytes(data, model=model)
+    assert info.n_tokens > 2 * 1023
+    assert info.llm_skipped is not None
+    est, zstd_frame = info.llm_skipped
+    assert est > zstd_frame
+    assert info.mode in (ct.ZSTD, ct.STORED) and "LLM" not in info.candidates
+    assert api.decompress_bytes(blob, model=model)[0] == data
+
+
+def test_skip_heuristic_keeps_prose_and_reuses_first_block(model):
+    data = (SAMPLES / "prose.txt").read_bytes()  # 284 tokens = 6 blocks of 50
+    blob, info = api.compress_bytes(data, block_size=50, model=model)
+    assert info.mode == ct.LLM and info.llm_skipped is None
+    no_skip, _ = api.compress_bytes(data, block_size=50, model=model, skip=False)
+    forced, _ = api.compress_bytes(data, mode="llm", block_size=50, model=model)
+    assert blob == no_skip == forced  # reused first block -> identical output
+
+
 # --- corruption -------------------------------------------------------------------
 
 

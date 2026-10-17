@@ -98,7 +98,7 @@ def cmd_compress(args: argparse.Namespace) -> int:
 
     t0 = time.perf_counter()
     with progress_factory("compress", show_progress(args)) as pf:
-        blob, info = api.compress_bytes(data, args.mode, args.block_size, pf)
+        blob, info = api.compress_bytes(data, args.mode, args.block_size, pf, skip=not args.no_skip)
     if args.verify:
         with progress_factory("verify", show_progress(args)) as pf:
             restored, _ = api.decompress_bytes(blob, pf)
@@ -111,6 +111,9 @@ def cmd_compress(args: argparse.Namespace) -> int:
         ratio = len(data) / len(blob)
         bpc = f", {len(blob) * 8 / info.chars:.3f} bits/char" if info.mode == LLM and info.chars else ""
         verified = ", verified" if args.verify else ""
+        if info.llm_skipped:
+            est, zst = info.llm_skipped
+            verified += f"; LLM skipped: est. {est} B > zstd {zst} B"
         print(
             f"compress: {src} -> {out}  mode={MODE_NAMES[info.mode]}  "
             f"{len(data)} -> {len(blob)} B  (ratio {ratio:.2f}x{bpc}{verified})  {elapsed:.1f} s"
@@ -174,6 +177,20 @@ def cmd_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_bench(args: argparse.Namespace) -> int:
+    from llmzip import bench
+
+    paths = [Path(f) for f in args.files]
+    missing = [str(p) for p in paths if not p.is_file()]
+    if missing:
+        raise UsageError(f"not a file: {', '.join(missing)}")
+    results = bench.run(paths, args.block_sizes, not args.no_decompress, Path(args.out))
+    failed = [r["file"] for r in results["files"] if r["llm"] and r["llm"]["roundtrip"] is False]
+    if failed:
+        raise LlmzipError(f"round trip FAILED for: {', '.join(failed)}")
+    return 0
+
+
 def cmd_not_implemented(args: argparse.Namespace) -> int:
     print(f"{args.command}: not implemented yet", file=sys.stderr)
     return 2
@@ -184,6 +201,16 @@ def block_size_arg(value: str) -> int:
     if not 1 <= n <= config.MAX_BLOCK_TOKENS:
         raise argparse.ArgumentTypeError(f"must be in 1..{config.MAX_BLOCK_TOKENS}")
     return n
+
+
+def block_sizes_arg(value: str) -> list[int]:
+    try:
+        sizes = [block_size_arg(v) for v in value.split(",") if v.strip()]
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+    if not sizes:
+        raise argparse.ArgumentTypeError("need at least one block size")
+    return sizes
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -198,6 +225,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"max tokens per LLM block (1..{config.MAX_BLOCK_TOKENS})")
     p.add_argument("--force", action="store_true", help="overwrite the output if it exists")
     p.add_argument("--verify", action="store_true", help="decompress in-process and compare")
+    p.add_argument("--no-skip", action="store_true",
+                   help="auto mode: always run the full LLM, even if the first block predicts zstd wins")
     p.add_argument("-q", "--quiet", action="store_true", help="no progress bar or summary")
     p.set_defaults(func=cmd_compress)
 
@@ -208,9 +237,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-q", "--quiet", action="store_true", help="no progress bar or summary")
     p.set_defaults(func=cmd_decompress)
 
+    p = sub.add_parser("bench", help="benchmark llmzip against gzip/xz/zstd")
+    p.add_argument("files", nargs="+")
+    p.add_argument("--block-sizes", type=block_sizes_arg, default=[config.MAX_BLOCK_TOKENS],
+                   help="comma-separated LLM block sizes to compare (compress only)")
+    p.add_argument("--no-decompress", action="store_true", help="skip the decompression round trip")
+    p.add_argument("--out", default="bench/results", help="directory for the .json and .md results")
+    p.set_defaults(func=cmd_bench)
+
     for name, help_text in [
         ("inspect", "show per-token surprise as a heatmap"),
-        ("bench", "benchmark against gzip/xz/zstd"),
     ]:
         p = sub.add_parser(name, help=help_text)
         p.add_argument("args", nargs="*")

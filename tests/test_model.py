@@ -96,3 +96,22 @@ def test_batched_vs_incremental_info(model):
         batched = model.model(input_ids=torch.tensor([[config.BOS_TOKEN_ID] + ids[:-1]])).logits[0]
     diff = (batched - incremental).abs().max().item()
     print(f"\nbatched vs incremental: bit-identical={torch.equal(batched, incremental)} max|diff|={diff:.3e}")
+
+
+def test_weights_hash_cache_matches_uncached(model, tmp_path, monkeypatch):
+    monkeypatch.setenv("LLMZIP_CACHE_DIR", str(tmp_path))
+    model._weights_sha = None
+    model.weights_sha256(use_cache=False)
+    uncached = model.model_fingerprint()
+    assert not (tmp_path / "weights_sha256.json").exists()
+
+    model._weights_sha = None
+    first = model.model_fingerprint()  # computes and writes the cache
+    assert (tmp_path / "weights_sha256.json").exists()
+    model._weights_sha = None
+    cached = model.model_fingerprint()  # read from the cache
+    assert uncached == first == cached
+
+    (tmp_path / "weights_sha256.json").write_text("{not json")  # never fail because of the cache
+    model._weights_sha = None
+    assert model.model_fingerprint() == uncached

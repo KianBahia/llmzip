@@ -1,0 +1,318 @@
+{
+  "timestamp": "20261017-115646",
+  "model_load_s": 0.11923045900766738,
+  "fingerprint": "2bb9a6826f48e26a",
+  "block_sizes": [
+    1023
+  ],
+  "files": [
+    {
+      "file": "blocktest.txt",
+      "bytes": 9515,
+      "gzip -9": {
+        "size": 4399,
+        "bpb": 3.6985811875985286
+      },
+      "xz -9": {
+        "size": 4352,
+        "bpb": 3.6590646347871782
+      },
+      "zstd -19": {
+        "size": 4334,
+        "bpb": 3.6439306358381502
+      },
+      "llm": {
+        "tokens": 3000,
+        "blocks": 3,
+        "payload": 2150,
+        "size": 2196,
+        "bpb": 1.8463478717813977,
+        "payload_bpb": 1.8076720966894377,
+        "compress_s": 31.198346874996787,
+        "compress_tok_s": 96.15894111377685,
+        "decompress_s": 30.28172437500325,
+        "decompress_tok_s": 99.06965544130041,
+        "roundtrip": true
+      },
+      "auto": {
+        "mode": "LLM",
+        "size": 2196,
+        "llm_skipped_estimate": null
+      },
+      "block_sizes": [
+        {
+          "block_size": 1023,
+          "blocks": 3,
+          "size": 2196,
+          "payload": 2150,
+          "bpb": 1.8463478717813977,
+          "compress_s": 31.198346874996787
+        }
+      ]
+    },
+    {
+      "file": "prose.txt",
+      "bytes": 1301,
+      "gzip -9": {
+        "size": 697,
+        "bpb": 4.285933897002306
+      },
+      "xz -9": {
+        "size": 820,
+        "bpb": 5.0422751729438895
+      },
+      "zstd -19": {
+        "size": 702,
+        "bpb": 4.316679477325135
+      },
+      "llm": {
+        "tokens": 284,
+        "blocks": 1,
+        "payload": 157,
+        "size": 199,
+        "bpb": 1.223674096848578,
+        "payload_bpb": 0.9654112221368178,
+        "compress_s": 2.220142834004946,
+        "compress_tok_s": 127.91969762039523,
+        "decompress_s": 1.8551128749968484,
+        "decompress_tok_s": 153.0904150511502,
+        "roundtrip": true
+      },
+      "auto": {
+        "mode": "LLM",
+        "size": 199,
+        "llm_skipped_estimate": null
+      },
+      "block_sizes": [
+        {
+          "block_size": 1023,
+          "blocks": 1,
+          "size": 199,
+          "payload": 157,
+          "bpb": 1.223674096848578,
+          "compress_s": 2.220142834004946
+        }
+      ]
+    },
+    {
+      "file": "prose_long.txt",
+      "bytes": 4150,
+      "gzip -9": {
+        "size": 1909,
+        "bpb": 3.68
+      },
+      "xz -9": {
+        "size": 2004,
+        "bpb": 3.863132530120482
+      },
+      "zstd -19": {
+        "size": 1872,
+        "bpb": 3.6086746987951805
+      },
+      "llm": {
+        "tokens": 894,
+        "blocks": 1,
+        "payload": 484,
+        "size": 526,
+        "bpb": 1.0139759036144578,
+        "payload_bpb": 0.9330120481927711,
+        "compress_s": 8.145688708027592,
+        "compress_tok_s": 109.7513091948826,
+        "decompress_s": 8.146347833011532,
+        "decompress_tok_s": 109.74242916282488,
+        "roundtrip": true
+      },
+      "auto": {
+        "mode": "LLM",
+        "size": 526,
+        "llm_skipped_estimate": null
+      },
+      "block_sizes": [
+        {
+          "block_size": 1023,
+          "blocks": 1,
+          "size": 526,
+          "payload": 484,
+          "bpb": 1.0139759036144578,
+          "compress_s": 8.145688708027592
+        }
+      ]
+    },
+    {
+      "file": "reports_concat.md",
+      "bytes": 32883,
+      "gzip -9": {
+        "size": 12763,
+        "bpb": 3.1050694887936015
+      },
+      "xz -9": {
+        "size": 12104,
+        "bpb": 2.9447434844752607
+      },
+      "zstd -19": {
+        "size": 12351,
+        "bpb": 3.004835325244047
+      },
+      "llm": {
+        "tokens": 10272,
+        "blocks": 11,
+        "payload": 7358,
+        "size": 7419,
+        "bpb": 1.8049448043061764,
+        "payload_bpb": 1.7901043092175288,
+        "compress_s": 96.57878483398235,
+        "compress_tok_s": 106.35876209933093,
+        "decompress_s": 102.9217540420068,
+        "decompress_tok_s": 99.80397337386569,
+        "roundtrip": true
+      },
+      "auto": {
+        "mode": "LLM",
+        "size": 7419,
+        "llm_skipped_estimate": null
+      },
+      "block_sizes": [
+        {
+          "block_size": 1023,
+          "blocks": 11,
+          "size": 7419,
+          "payload": 7358,
+          "bpb": 1.8049448043061764,
+          "compress_s": 96.57878483398235
+        }
+      ]
+    },
+    {
+      "file": "sample.json",
+      "bytes": 775,
+      "gzip -9": {
+        "size": 365,
+        "bpb": 3.767741935483871
+      },
+      "xz -9": {
+        "size": 428,
+        "bpb": 4.418064516129032
+      },
+      "zstd -19": {
+        "size": 368,
+        "bpb": 3.798709677419355
+      },
+      "llm": {
+        "tokens": 358,
+        "blocks": 1,
+        "payload": 109,
+        "size": 150,
+        "bpb": 1.5483870967741935,
+        "payload_bpb": 1.1251612903225807,
+        "compress_s": 2.406930790981278,
+        "compress_tok_s": 148.73713915722834,
+        "decompress_s": 2.3712062500126194,
+        "decompress_tok_s": 150.9780096092842,
+        "roundtrip": true
+      },
+      "auto": {
+        "mode": "LLM",
+        "size": 150,
+        "llm_skipped_estimate": null
+      },
+      "block_sizes": [
+        {
+          "block_size": 1023,
+          "blocks": 1,
+          "size": 150,
+          "payload": 109,
+          "bpb": 1.5483870967741935,
+          "compress_s": 2.406930790981278
+        }
+      ]
+    },
+    {
+      "file": "sample.md",
+      "bytes": 653,
+      "gzip -9": {
+        "size": 424,
+        "bpb": 5.194486983154671
+      },
+      "xz -9": {
+        "size": 508,
+        "bpb": 6.223583460949464
+      },
+      "zstd -19": {
+        "size": 427,
+        "bpb": 5.2312404287901995
+      },
+      "llm": {
+        "tokens": 196,
+        "blocks": 1,
+        "payload": 113,
+        "size": 154,
+        "bpb": 1.886676875957121,
+        "payload_bpb": 1.3843797856049005,
+        "compress_s": 1.2980426250142045,
+        "compress_tok_s": 150.99658225619143,
+        "decompress_s": 1.259116291999817,
+        "decompress_tok_s": 155.66473188008635,
+        "roundtrip": true
+      },
+      "auto": {
+        "mode": "LLM",
+        "size": 154,
+        "llm_skipped_estimate": null
+      },
+      "block_sizes": [
+        {
+          "block_size": 1023,
+          "blocks": 1,
+          "size": 154,
+          "payload": 113,
+          "bpb": 1.886676875957121,
+          "compress_s": 1.2980426250142045
+        }
+      ]
+    },
+    {
+      "file": "sample.py",
+      "bytes": 761,
+      "gzip -9": {
+        "size": 444,
+        "bpb": 4.667542706964521
+      },
+      "xz -9": {
+        "size": 540,
+        "bpb": 5.676741130091984
+      },
+      "zstd -19": {
+        "size": 452,
+        "bpb": 4.751642575558476
+      },
+      "llm": {
+        "tokens": 309,
+        "blocks": 1,
+        "payload": 165,
+        "size": 207,
+        "bpb": 2.1760840998685937,
+        "payload_bpb": 1.7345597897503284,
+        "compress_s": 2.0758220839779824,
+        "compress_tok_s": 148.85668785633626,
+        "decompress_s": 2.0803087080130354,
+        "decompress_tok_s": 148.53564704593055,
+        "roundtrip": true
+      },
+      "auto": {
+        "mode": "LLM",
+        "size": 207,
+        "llm_skipped_estimate": null
+      },
+      "block_sizes": [
+        {
+          "block_size": 1023,
+          "blocks": 1,
+          "size": 207,
+          "payload": 165,
+          "bpb": 2.1760840998685937,
+          "compress_s": 2.0758220839779824
+        }
+      ]
+    }
+  ]
+}
